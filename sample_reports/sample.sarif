@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "DemoScanner",
+          "informationUri": "https://example.com/demoscanner",
+          "rules": [
+            {
+              "id": "DEMO001",
+              "name": "Hardcoded Credential",
+              "shortDescription": {
+                "text": "Hardcoded credential detected"
+              },
+              "fullDescription": {
+                "text": "A hardcoded credential was found in source code and should be removed."
+              },
+              "help": {
+                "text": "Store secrets in a secure secret manager instead of source code."
+              },
+              "properties": {
+                "security-severity": "8.0"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "DEMO001",
+          "level": "error",
+          "message": {
+            "text": "Potential hardcoded credential found in app/settings.py."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/settings.py"
+                },
+                "region": {
+                  "startLine": 12,
+                  "endLine": 12
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

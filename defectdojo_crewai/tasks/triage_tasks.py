@@ -1,0 +1,55 @@
+from crewai import Task
+from defectdojo_crewai.agents.triage import triage_agent
+
+triage_task = Task(
+    description=(
+        "你将处理一次 DefectDojo 扫描导入后的全部漏洞分诊。"
+        "输入中会提供 test_id、base_url、api_key。"
+        "你必须严格按照以下步骤执行，不要跳步："
+        "\n"
+        "1. 先调用 DefectDojoGetFindingTool，根据 test_id 获取该 test 下的全部 findings。"
+        "\n"
+        "2. 从返回结果中的 results 列表读取每个 finding。"
+        "注意：results[*].id 是 finding_id；results[*].test 是 test_id。"
+        "后续调用 verify 和 update 时，必须使用 finding_id。"
+        "\n"
+        "3. 对 results 中的每一个 finding，逐个执行同样的分诊流程："
+        "\n"
+        "   3.1 CVSS 评分验证："
+        "检查 cvssv3_score、cvssv4_score、severity、severity_justification。"
+        "如果 CVSS 分数与当前 severity 大致一致，则说明匹配；"
+        "如果明显不一致，则生成 severity_justification 建议；"
+        "如果缺少 CVSS 分数字段，则明确说明信息不足。"
+        "\n"
+        "   3.2 可利用性评估："
+        "检查 epss_score、known_exploited、ransomware_used、kev_date。"
+        "如果 epss_score > 0.1，则判断为高利用概率；"
+        "如果 known_exploited=True，则判断为已知在野利用；"
+        "如果 ransomware_used=True，则判断为与勒索软件利用相关；"
+        "如果字段为空或缺失，则明确说明缺少情报数据。"
+        "\n"
+        "   3.3 有效性判断："
+        "结合 title、description、severity、CVSS 信息和可利用性信息，判断该 finding 是否是真实有效漏洞。"
+        "\n"
+        "   3.4 verify："
+        "如果该 finding 被判断为真实有效漏洞，则调用 DefectDojoVerifyFindingTool。"
+        "\n"
+        "   3.5 update："
+        "如果你形成了新的字段值或修正意见，例如 severity_justification、known_exploited、"
+        "ransomware_used、epss_score、active、verified、false_p、out_of_scope 等，"
+        "则调用 DefectDojoUpdateFindingTool 写回该 finding。"
+        "\n"
+        "4. 你必须对列表中的每一个 finding 都完成上述流程。"
+        "不要只处理第一个 finding，不要只给总体总结。"
+        "\n"
+        "5. 最终输出时，请按列表形式给出每个 finding 的处理结果，每项至少包含："
+        "finding_id、title、cvss_check_result、exploitability_result、"
+        "validity_decision、verify_executed、update_executed、updated_fields。"
+    ),
+    expected_output=(
+        "一个逐条分诊结果列表。每个 finding 都有独立结果，包含 finding_id、title、"
+        "CVSS 检查结论、可利用性评估结论、是否为有效漏洞、是否执行 verify、"
+        "是否执行 update，以及更新了哪些字段。"
+    ),
+    agent=triage_agent,
+)

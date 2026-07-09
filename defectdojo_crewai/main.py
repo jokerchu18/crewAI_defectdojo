@@ -5,6 +5,12 @@ from defectdojo_crewai.tools.defectdojo_api import (
 )
 from defectdojo_crewai.agents.scan_import import scan_import_agent
 from defectdojo_crewai.tasks.import_tasks import import_scan_task
+from defectdojo_crewai.agents.triage import triage_agent
+from defectdojo_crewai.tasks.triage_tasks import triage_task
+from defectdojo_crewai.agents.remediation import remediation_agent
+from defectdojo_crewai.tasks.remediation_tasks import remediation_task
+
+
 
 def main():
 
@@ -26,8 +32,8 @@ def main():
     # print(import_result)
 
     crew = Crew(
-        agents=[scan_import_agent],
-        tasks=[import_scan_task],
+        agents=[scan_import_agent,remediation_agent],
+        tasks=[import_scan_task,remediation_task],
         process=Process.sequential,
         verbose=True,
     )

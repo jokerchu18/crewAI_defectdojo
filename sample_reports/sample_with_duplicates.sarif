@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "DemoScanner",
+          "informationUri": "https://example.com/demoscanner",
+          "rules": [
+            {
+              "id": "DEMO001",
+              "name": "Hardcoded Credential",
+              "shortDescription": {
+                "text": "Hardcoded credential detected"
+              },
+              "fullDescription": {
+                "text": "A hardcoded credential was found in source code and should be removed."
+              },
+              "help": {
+                "text": "Store secrets in a secure secret manager instead of source code."
+              },
+              "properties": {
+                "security-severity": "8.0"
+              }
+            },
+            {
+              "id": "DEMO002",
+              "name": "Weak Hash Algorithm",
+              "shortDescription": {
+                "text": "Weak hash usage detected"
+              },
+              "fullDescription": {
+                "text": "An insecure hash algorithm was used and should be replaced with a stronger alternative."
+              },
+              "help": {
+                "text": "Use a modern password hashing or cryptographic hashing algorithm."
+              },
+              "properties": {
+                "security-severity": "6.5"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "DEMO001",
+          "level": "error",
+          "message": {
+            "text": "Potential hardcoded credential found in app/settings.py."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/settings.py"
+                },
+                "region": {
+                  "startLine": 12,
+                  "endLine": 12
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DEMO001",
+          "level": "error",
+          "message": {
+            "text": "Potential hardcoded credential found in app/settings.py."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/settings.py"
+                },
+                "region": {
+                  "startLine": 12,
+                  "endLine": 12
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DEMO002",
+          "level": "warning",
+          "message": {
+            "text": "Weak hash algorithm md5 used in app/auth.py."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/auth.py"
+                },
+                "region": {
+                  "startLine": 45,
+                  "endLine": 45
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

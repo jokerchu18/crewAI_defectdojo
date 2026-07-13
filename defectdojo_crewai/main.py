@@ -63,7 +63,8 @@ def main():
 
     inputs2=approved_candidates_payload
 
-    result2 = exc_crew(crew2, inputs2)
+    if inputs2:
+        result2 = exc_crew(crew2, inputs2)
 
 if __name__ == "__main__":
     main()

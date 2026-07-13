@@ -40,9 +40,9 @@ def person_review(results : list[RiskAcceptanceCandidate]) :
         elif action == "reject":
             print(f"{candidate.finding_id}已拒绝accept请求")
 
-    if not approved_candidates:
-        print("没有任何 finding 被批准，流程结束。")
-        return None
+    # if not approved_candidates:
+    #     print("没有任何 finding 被批准，流程结束。")
+    #     return None
 
     approved_candidates_payload = [
         candidate.model_dump() for candidate in approved_candidates

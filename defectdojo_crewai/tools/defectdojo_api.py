@@ -807,3 +807,117 @@ def defectdojo_verify_finding_tool(
 #     payload["findings"] = [finding_minimal.model_dump()]
 #     payload["raw_finding"] = finding
 #     return payload
+
+# 创建risk acceptance工具
+
+class DefectDojoCreateRiskAcceptanceInput(BaseModel):
+    base_url: str = Field(..., description="DefectDojo base URL")
+    api_key: str = Field(..., description="DefectDojo API key")
+    name: str = Field(..., description="Risk acceptance name")
+    recommendation: str = Field(..., description="Recommendation code, such as A")
+    recommendation_details: str | None = Field(default=None, description="Recommendation details")
+    decision: str = Field(..., description="Decision code, such as A")
+    decision_details: str | None = Field(default=None, description="Decision details")
+    accepted_by: str | None = Field(default=None, description="Name of the approver")
+    expiration_date: str | None = Field(default=None, description="Risk acceptance expiration datetime in ISO 8601 format")
+    expiration_date_warned: str | None = Field(default=None, description="Expiration warned datetime in ISO 8601 format")
+    expiration_date_handled: str | None = Field(default=None, description="Expiration handled datetime in ISO 8601 format")
+    reactivate_expired: bool | None = Field(default=None, description="Whether to reactivate findings when expired")
+    restart_sla_expired: bool | None = Field(default=None, description="Whether to restart SLA when expired")
+    owner: int | None = Field(default=None, description="Owner user ID")
+    accepted_findings: list[int] = Field(..., description="Finding IDs to include in this risk acceptance")
+
+
+class DefectDojoCreateRiskAcceptanceTool(BaseTool):
+    name: str = "defectdojo_create_risk_acceptance_tool"
+    description: str = "Create a DefectDojo risk acceptance record for one or more findings."
+    args_schema: type[BaseModel] = DefectDojoCreateRiskAcceptanceInput
+
+    def _run(
+        self,
+        base_url: str,
+        api_key: str,
+        name: str,
+        recommendation: str,
+        recommendation_details: str | None = None,
+        decision: str = "A",
+        decision_details: str | None = None,
+        accepted_by: str | None = None,
+        expiration_date: str | None = None,
+        expiration_date_warned: str | None = None,
+        expiration_date_handled: str | None = None,
+        reactivate_expired: bool | None = None,
+        restart_sla_expired: bool | None = None,
+        owner: int | None = None,
+        accepted_findings: list[int] | None = None,
+    ) -> dict:
+        return defectdojo_create_risk_acceptance_tool(
+            base_url=base_url,
+            api_key=api_key,
+            name=name,
+            recommendation=recommendation,
+            recommendation_details=recommendation_details,
+            decision=decision,
+            decision_details=decision_details,
+            accepted_by=accepted_by,
+            expiration_date=expiration_date,
+            expiration_date_warned=expiration_date_warned,
+            expiration_date_handled=expiration_date_handled,
+            reactivate_expired=reactivate_expired,
+            restart_sla_expired=restart_sla_expired,
+            owner=owner,
+            accepted_findings=accepted_findings or [],
+        )
+
+
+def defectdojo_create_risk_acceptance_tool(
+    base_url: str,
+    api_key: str,
+    name: str,
+    recommendation: str,
+    recommendation_details: str | None = None,
+    decision: str = "A",
+    decision_details: str | None = None,
+    accepted_by: str | None = None,
+    expiration_date: str | None = None,
+    expiration_date_warned: str | None = None,
+    expiration_date_handled: str | None = None,
+    reactivate_expired: bool | None = None,
+    restart_sla_expired: bool | None = None,
+    owner: int | None = None,
+    accepted_findings: list[int] | None = None,
+) -> dict:
+    """Create a risk acceptance via POST /api/v2/risk_acceptances/."""
+    if not accepted_findings:
+        raise ValueError("accepted_findings must contain at least one finding_id.")
+
+    url = f"{base_url.rstrip('/')}/api/v2/risk_acceptances/"
+    headers = {
+        "Authorization": f"Token {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "name": name,
+        "recommendation": recommendation,
+        "recommendation_details": recommendation_details,
+        "decision": decision,
+        "decision_details": decision_details,
+        "accepted_by": accepted_by,
+        "expiration_date": expiration_date,
+        "expiration_date_warned": expiration_date_warned,
+        "expiration_date_handled": expiration_date_handled,
+        "reactivate_expired": reactivate_expired,
+        "restart_sla_expired": restart_sla_expired,
+        "owner": owner,
+        "accepted_findings": accepted_findings,
+    }
+
+    response = httpx.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=60,
+    )
+    response.raise_for_status()
+    return response.json()

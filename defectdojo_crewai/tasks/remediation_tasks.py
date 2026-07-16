@@ -8,7 +8,7 @@ remediation_task = Task(
         "\n"
         "请严格按以下步骤执行："
         "\n"
-        "1. 调用 DefectDojoGetFindingByProductIDTool，获取该 Product ID 下所有 active=True 的 findings，注意返回值中的id 字段就是 finding ID"
+        "1. 调用 defectdojo_get_finding_by_product_tool，获取该 Product ID 下所有 active=True 的 findings，注意返回值中的id 字段就是 finding ID"
         "\n"
         "2. 对每个 finding 计算 SLA 信息："
         "- 严重级别对应的 SLA 总天数：Critical=7, High=30, Medium=90, Low=180, Info=365；"
@@ -25,7 +25,7 @@ remediation_task = Task(
         "\n"
         "4. 按优先级从高到低排序，标记已超期和即将到期漏洞。"
         "\n"
-        "5. 为每个 finding 生成修复建议，并且你必须对每个 finding 调用 DefectDojoUpdateFindingTool，只传入本阶段需要更新的字段,"
+        "5. 为每个 finding 生成修复建议，并且你必须对每个 finding 调用 defectdojo_update_remediation_tool，"
         "不要重复传入无关字段。至少更新以下字段："
         "- planned_remediation_date"
         "- effort_for_fixing"
@@ -40,7 +40,7 @@ remediation_task = Task(
         "- planned_remediation_version"
         "- reviewers"
         "\n"
-        "8. 不要只做分析而不执行更新。每个 finding 都必须至少执行一次 DefectDojoUpdateFindingTool。"
+        "8. 不要只做分析而不执行更新。每个 finding 都必须至少执行一次 defectdojo_update_remediation_tool。"
         "\n"
         "9. 最终输出必须包含每个 finding 的："
         "- finding_id"
@@ -60,4 +60,18 @@ remediation_task = Task(
     ),
     agent=remediation_agent,
     context=[import_scan_task]
+)
+
+remediation_request_task = Task(
+    description=(
+        "根据用户请求，对 Product ID {product_id} 执行完整的修复跟踪与 SLA 分析。\n"
+        "1. 必须先调用 defectdojo_get_finding_by_product_tool，参数为 product_id={product_id}，"
+        "获取所有 active=True 的 findings；在获得工具结果前禁止输出最终答案。\n"
+        "2. 逐条计算 SLA、优先级、到期状态并生成修复建议。\n"
+        "3. 对每个 finding 调用 defectdojo_update_remediation_tool，完整传入 "
+        "planned_remediation_date、effort_for_fixing、under_review。\n"
+        "4. 最终按优先级降序输出每个 finding 的分析和实际更新结果。"
+    ),
+    expected_output="按优先级排序的修复跟踪、SLA 告警和字段更新结果",
+    agent=remediation_agent,
 )

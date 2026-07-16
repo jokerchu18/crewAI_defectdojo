@@ -2,8 +2,9 @@ from crewai import Agent
 
 from defectdojo_crewai.config import llm_config
 from defectdojo_crewai.tools.defectdojo_api import (
-    DefectDojoCreateRiskAcceptanceTool,
-    DefectDojoUpdateFindingTool,
+    DefectDojoCreateApprovedRiskAcceptanceTool,
+    DefectDojoGetFindingByProductIDTool,
+    DefectDojoUpdateRiskAcceptanceTool,
 )
 
 risk_acceptance_review_agent = Agent(
@@ -14,10 +15,14 @@ risk_acceptance_review_agent = Agent(
     ),
     backstory=(
         "你负责风险接受前的预审。"
-        "你只能分析 remediation 阶段输出的 findings，"
+        "你可以分析 remediation 阶段输出的 findings，"
+        "也可以根据用户提供的 Product ID 查询真实 findings。"
         "判断哪些 Medium、Low、Info 漏洞可以接受风险，并生成结构化审批建议。"
         "你不能执行任何提交类动作。"
     ),
+    tools=[
+        DefectDojoGetFindingByProductIDTool(),
+    ],
     verbose=True,
     llm=llm_config.getLLM(),
 )
@@ -31,8 +36,8 @@ risk_acceptance_execute_agent = Agent(
         "你会遍历 approved_candidates 列表，对每个 finding 单独创建风险接受并更新状态。"
     ),
     tools=[
-        DefectDojoCreateRiskAcceptanceTool(),
-        DefectDojoUpdateFindingTool(),
+        DefectDojoCreateApprovedRiskAcceptanceTool(),
+        DefectDojoUpdateRiskAcceptanceTool(),
     ],
     verbose=True,
     llm=llm_config.getLLM(),
@@ -55,8 +60,8 @@ risk_acceptance_agent = Agent(
         "risk_accepted=True, active=False。"
     ),
     tools=[
-        DefectDojoCreateRiskAcceptanceTool(),
-        DefectDojoUpdateFindingTool(),
+        DefectDojoCreateApprovedRiskAcceptanceTool(),
+        DefectDojoUpdateRiskAcceptanceTool(),
     ],
     verbose=True,
     llm=llm_config.getLLM(),

@@ -1,6 +1,10 @@
 from crewai import Agent
 from defectdojo_crewai.config import llm_config
-from defectdojo_crewai.tools.defectdojo_api import DefectDojoGetFindingTool,DefectDojoUpdateFindingTool,DefectDojoVerifyFindingTool
+from defectdojo_crewai.tools.defectdojo_api import (
+    DefectDojoGetFindingTool,
+    DefectDojoUpdateTriageTool,
+    DefectDojoVerifyFindingTool,
+)
 
 
 triage_agent = Agent(
@@ -36,7 +40,7 @@ triage_agent = Agent(
     tools=[
         DefectDojoVerifyFindingTool(),
         DefectDojoGetFindingTool(),
-        DefectDojoUpdateFindingTool(),
+        DefectDojoUpdateTriageTool(),
     ],
     verbose=True,
     llm=llm_config.getLLM(),

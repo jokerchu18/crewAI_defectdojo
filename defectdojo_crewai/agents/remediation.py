@@ -3,7 +3,7 @@ from crewai import Agent, Task
 from defectdojo_crewai.config import llm_config
 from defectdojo_crewai.tools.defectdojo_api import (
     DefectDojoGetFindingByProductIDTool,
-    DefectDojoUpdateFindingTool,
+    DefectDojoUpdateRemediationTool,
 )
 
 remediation_agent = Agent(
@@ -26,12 +26,12 @@ remediation_agent = Agent(
         "剩余时间因子可按 (SLA剩余天数 / SLA总天数) 的倒数理解，剩余时间越少，优先级越高。"
         "你必须先获取 Product 下所有活跃漏洞，再逐条计算和排序。"
         "对每个漏洞必须要补充修复计划或跟踪信息，例如 planned_remediation_date、"
-        "effort_for_fixing、under_review ，调用 DefectDojoUpdateFindingTool 更新。"
+        "effort_for_fixing、under_review，并调用专用修复更新工具写回。"
         "你不能只给笼统总结，必须输出清晰的优先级列表和SLA告警结果。"
     ),
     tools=[
         DefectDojoGetFindingByProductIDTool(),
-        DefectDojoUpdateFindingTool(),
+        DefectDojoUpdateRemediationTool(),
     ],
     verbose=True,
     llm=llm_config.getLLM(),

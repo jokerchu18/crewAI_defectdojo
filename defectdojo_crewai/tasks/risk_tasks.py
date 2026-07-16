@@ -1,7 +1,6 @@
 from crewai import Task
 
 from defectdojo_crewai.agents.risk_acceptance import risk_acceptance_agent, risk_acceptance_review_agent, risk_acceptance_execute_agent
-from defectdojo_crewai.models.schemas import RiskAcceptanceReviewResult
 from defectdojo_crewai.tasks.remediation_tasks import remediation_task
 
 risk_acceptance_review_task = Task(
@@ -15,31 +14,53 @@ risk_acceptance_review_task = Task(
         "expiration_date, reactivate_expired, restart_sla_expired。\n"
         "4. decision 只能是 Accept 或 Reject。\n"
         "5. 只有 decision=Accept 的 finding 才会进入人工审批；"
-        "decision=Reject 的 finding 仅作为评估结果输出，不进入审批。"
+        "decision=Reject 的 finding 仅作为评估结果输出，不进入审批。\n"
+        "最终只输出合法 JSON，不要使用 Markdown。根字段必须是 candidates，"
+        "其值是候选项数组。"
     ),
     expected_output="结构化风险接受预审结果",
     agent=risk_acceptance_review_agent,
     context=[remediation_task],
-    output_pydantic=RiskAcceptanceReviewResult,
+)
+
+risk_acceptance_request_task = Task(
+    description=(
+        "用户请求评估 Product ID {product_id} 下的漏洞是否适合风险接受。\n"
+        "严重级别过滤条件为 {severity_filter}。\n"
+        "1. 必须先调用 defectdojo_get_finding_by_product_tool 获取真实 findings。\n"
+        "2. 只分析 active=True 且符合过滤条件的 finding。\n"
+        "3. Critical 和 High 必须输出 Reject。\n"
+        "4. Medium、Low、Info 可以结合实际风险判断 Accept 或 Reject。\n"
+        "5. decision=Accept 时必须给出 expiration_date，格式为 YYYY-MM-DD。\n"
+        "6. 必须明确 reactivate_expired 和 restart_sla_expired。\n"
+        "7. 本任务只能生成预审建议，不能创建 Risk Acceptance 或更新 Finding。\n"
+        "8. 返回字段必须包含 finding_id、severity、title、decision、reason、"
+        "expiration_date、reactivate_expired、restart_sla_expired。\n"
+        "最终只输出合法 JSON，不要使用 Markdown。根字段必须是 candidates。"
+    ),
+    expected_output="结构化风险接受预审结果",
+    agent=risk_acceptance_review_agent,
 )
 
 risk_acceptance_execute_task = Task(
     description=(
-        "你将接收一个已经人工审批通过的 approved_candidates 列表。\n"
-        "输入包含：human_approved 和 approved_candidates。\n"
+        "人工审批状态：{human_approved}\n"
+        "你将接收已经人工审批通过的列表：{approved_candidates}\n"
         "只有当 human_approved=True 时，才允许执行。\n"
         "请遍历 approved_candidates 中的每个元素，每个元素包含："
         "finding_id, severity, title, decision, reason, expiration_date, "
         "reactivate_expired, restart_sla_expired。\n"
         "对每个元素执行以下步骤：\n"
         "1. 如果 decision 不是 Accept，则跳过。\n"
-        "2. 调用 DefectDojoCreateRiskAcceptanceTool 创建风险接受记录。\n"
-        "3. 必须完整传入 accepted_findings、expiration_date、"
-        "reactivate_expired、restart_sla_expired。\n"
-        "4. 创建成功后，调用 DefectDojoUpdateFindingTool 更新 finding："
+        "2. 调用 defectdojo_create_approved_risk_acceptance_tool，完整传入 "
+        "finding_id、title、reason、expiration_date、reactivate_expired、"
+        "restart_sla_expired。\n"
+        "3. 创建成功后，调用 defectdojo_update_risk_acceptance_tool 更新 finding："
         "risk_accepted=True, active=False。\n"
-        "5. 输出每个 finding 的执行结果。\n"
-        "如果 human_approved 不为 True，则拒绝执行。"
+        "4. 输出每个 finding 的执行结果。\n"
+        "如果 human_approved 不为 True，则拒绝执行。\n"
+        "最终只输出合法 JSON，不要使用 Markdown。根字段必须是 results，"
+        "每项包含 finding_id、risk_acceptance_created、finding_updated、message。"
     ),
     expected_output="批量风险接受执行结果",
     agent=risk_acceptance_execute_agent,

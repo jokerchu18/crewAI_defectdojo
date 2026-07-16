@@ -10,11 +10,9 @@ from defectdojo_crewai.config.settings import settings
 # 导入智能体业务规范函数
 
 class DefectDojoImportScanInput(BaseModel):
-    base_url: str = Field(...)
-    api_key: str = Field(...)
-    scan_type: str = Field(...)
-    engagement_id: int = Field(...)
-    scan_file_path: str = Field(...)
+    scan_type: str = Field(..., description="DefectDojo scan type")
+    engagement_id: int = Field(..., description="DefectDojo engagement ID")
+    scan_file_path: str = Field(..., description="Local scan report path")
 
 class ImportScanResult(BaseModel):
     stage: str = "import_scan"
@@ -30,8 +28,6 @@ class DefectDojoImportScanTool(BaseTool):
 
     def _run(
         self,
-        base_url: str,
-        api_key: str,
         scan_type: str,
         engagement_id: int,
         scan_file_path: str,
@@ -39,9 +35,9 @@ class DefectDojoImportScanTool(BaseTool):
         return defectdojo_import_scan_tool(
             base_url=settings.defectdojo_base_url,
             api_key=settings.defectdojo_api_key,
-            scan_type=settings.default_scan_type,
-            engagement_id=settings.defectdojo_engagement_id,
-            scan_file_path=settings.default_scan_file_path,
+            scan_type=scan_type,
+            engagement_id=engagement_id,
+            scan_file_path=scan_file_path,
         )
 
 
@@ -207,8 +203,6 @@ def defectdojo_get_findings_tool(
 # 读取findings by test id工具
 
 class DefectDojoGetFindingInput(BaseModel):
-    base_url: str = Field(...)
-    api_key: str = Field(...)
     test_id: int = Field(..., description="DefectDojo test ID")
 
 class DefectDojoGetFindingTool(BaseTool):
@@ -218,8 +212,6 @@ class DefectDojoGetFindingTool(BaseTool):
 
     def _run(
         self,
-        base_url: str,
-        api_key: str,
         test_id: int,
     ):
         return defectdojo_get_finding_tool(
@@ -253,8 +245,6 @@ def defectdojo_get_finding_tool(
 # 读取findings by product id工具
 
 class DefectDojoGetFindingByProductIDInput(BaseModel):
-    base_url: str = Field(...)
-    api_key: str = Field(...)
     product_id: int = Field(..., description="DefectDojo product ID")
 
 class DefectDojoGetFindingByProductIDTool(BaseTool):
@@ -264,8 +254,6 @@ class DefectDojoGetFindingByProductIDTool(BaseTool):
 
     def _run(
         self,
-        base_url: str,
-        api_key: str,
         product_id: int,
     ):
         return defectdojo_get_finding_by_product_tool(
@@ -300,8 +288,8 @@ def defectdojo_get_finding_by_product_tool(
 
 class DefectDojoUpdateFindingInput(BaseModel):
     finding_id: int = Field(..., description="Need to update DefectDojo finding_id")
-    base_url: str = Field(..., description="DefectDojo base URL")
-    api_key: str = Field(..., description="DefectDojo API key")
+    base_url: str | None = Field(default=None, description="Defaults to settings")
+    api_key: str | None = Field(default=None, description="Defaults to settings")
     mitigated: str | None = Field(default=None, description="Mitigated timestamp")
     mitigated_by: int | None = Field(default=None, description="Mitigated by user ID")
     tags: list[str] | None = Field(default=None, description="Finding tags")
@@ -375,8 +363,8 @@ class DefectDojoUpdateFindingTool(BaseTool):
     def _run(
         self,
         finding_id: int,
-        base_url: str,
-        api_key: str,
+        base_url: str | None = None,
+        api_key: str | None = None,
         mitigated: str | None = None,
         mitigated_by: int | None = None,
         tags: list[str] | None = None,
@@ -665,14 +653,124 @@ def defectdojo_update_finding_tool(
     response.raise_for_status()
     return response.json()
 
+
+class DefectDojoUpdateRemediationInput(BaseModel):
+    finding_id: int = Field(..., description="DefectDojo finding ID")
+    planned_remediation_date: str = Field(
+        ...,
+        description="Planned remediation date in YYYY-MM-DD format",
+    )
+    effort_for_fixing: str = Field(..., description="Estimated remediation effort")
+    under_review: bool = Field(..., description="Whether remediation is under review")
+
+
+class DefectDojoUpdateRemediationTool(BaseTool):
+    name: str = "defectdojo_update_remediation_tool"
+    description: str = "Update remediation planning fields for one finding."
+    args_schema: type[BaseModel] = DefectDojoUpdateRemediationInput
+
+    def _run(
+        self,
+        finding_id: int,
+        planned_remediation_date: str,
+        effort_for_fixing: str,
+        under_review: bool,
+    ) -> dict:
+        return defectdojo_update_finding_tool(
+            finding_id=finding_id,
+            base_url=settings.defectdojo_base_url,
+            api_key=settings.defectdojo_api_key,
+            planned_remediation_date=planned_remediation_date,
+            effort_for_fixing=effort_for_fixing,
+            under_review=under_review,
+        )
+
+
+class DefectDojoUpdateTriageInput(BaseModel):
+    finding_id: int = Field(..., description="DefectDojo finding ID")
+    severity_justification: str | None = Field(
+        ...,
+        description="Severity assessment, or null when unchanged",
+    )
+    epss_score: float | None = Field(
+        ...,
+        description="EPSS score, or null when unavailable",
+    )
+    known_exploited: bool | None = Field(
+        ...,
+        description="Known exploited status, or null when unknown",
+    )
+    ransomware_used: bool | None = Field(
+        ...,
+        description="Ransomware usage status, or null when unknown",
+    )
+    active: bool = Field(..., description="Whether the finding remains active")
+    verified: bool = Field(..., description="Whether the finding is verified")
+    false_p: bool = Field(..., description="Whether the finding is a false positive")
+    out_of_scope: bool = Field(..., description="Whether the finding is out of scope")
+
+
+class DefectDojoUpdateTriageTool(BaseTool):
+    name: str = "defectdojo_update_triage_tool"
+    description: str = "Update the triage decision and threat intelligence fields."
+    args_schema: type[BaseModel] = DefectDojoUpdateTriageInput
+
+    def _run(
+        self,
+        finding_id: int,
+        severity_justification: str | None,
+        epss_score: float | None,
+        known_exploited: bool | None,
+        ransomware_used: bool | None,
+        active: bool,
+        verified: bool,
+        false_p: bool,
+        out_of_scope: bool,
+    ) -> dict:
+        return defectdojo_update_finding_tool(
+            finding_id=finding_id,
+            base_url=settings.defectdojo_base_url,
+            api_key=settings.defectdojo_api_key,
+            severity_justification=severity_justification,
+            epss_score=epss_score,
+            known_exploited=known_exploited,
+            ransomware_used=ransomware_used,
+            active=active,
+            verified=verified,
+            false_p=false_p,
+            out_of_scope=out_of_scope,
+        )
+
+
+class DefectDojoUpdateRiskAcceptanceInput(BaseModel):
+    finding_id: int = Field(..., description="DefectDojo finding ID")
+    risk_accepted: bool = Field(..., description="Whether risk is accepted")
+    active: bool = Field(..., description="Whether the finding remains active")
+
+
+class DefectDojoUpdateRiskAcceptanceTool(BaseTool):
+    name: str = "defectdojo_update_risk_acceptance_tool"
+    description: str = "Update finding status after risk acceptance is created."
+    args_schema: type[BaseModel] = DefectDojoUpdateRiskAcceptanceInput
+
+    def _run(
+        self,
+        finding_id: int,
+        risk_accepted: bool,
+        active: bool,
+    ) -> dict:
+        return defectdojo_update_finding_tool(
+            finding_id=finding_id,
+            base_url=settings.defectdojo_base_url,
+            api_key=settings.defectdojo_api_key,
+            risk_accepted=risk_accepted,
+            active=active,
+        )
+
 # 确认漏洞有效工具
 
 class DefectDojoVerifyFindingInput(BaseModel):
     finding_id: int = Field(..., description="Need to verify DefectDojo finding's ID")
-    base_url: str = Field(..., description="DefectDojo base URL")
-    api_key: str = Field(..., description="DefectDojo API key")
-    note: str | None = Field(default=None, description="Optional verification note")
-    note_type: int | None = Field(default=None, description="Optional note type ID")
 
 class DefectDojoVerifyFindingTool(BaseTool):
     name: str = "defectdojo_verify_finding_tool"
@@ -682,17 +780,11 @@ class DefectDojoVerifyFindingTool(BaseTool):
     def _run(
         self,
         finding_id: int,
-        base_url: str,
-        api_key: str,
-        note: str | None = None,
-        note_type: int | None = None,
     ):
         return defectdojo_verify_finding_tool(
             finding_id=finding_id,
-            base_url=base_url,
-            api_key=api_key,
-            note=note,
-            note_type=note_type,
+            base_url=settings.defectdojo_base_url,
+            api_key=settings.defectdojo_api_key,
         )
 
 def defectdojo_verify_finding_tool(
@@ -811,10 +903,11 @@ def defectdojo_verify_finding_tool(
 # 创建risk acceptance工具
 
 class DefectDojoCreateRiskAcceptanceInput(BaseModel):
-    base_url: str = Field(..., description="DefectDojo base URL")
-    api_key: str = Field(..., description="DefectDojo API key")
     name: str = Field(..., description="Risk acceptance name")
     recommendation: str = Field(..., description="Recommendation code, such as A")
+    accepted_findings: list[int] = Field(..., description="Finding IDs to include in this risk acceptance")
+    base_url: str | None = Field(default=None, description="Defaults to settings")
+    api_key: str | None = Field(default=None, description="Defaults to settings")
     recommendation_details: str | None = Field(default=None, description="Recommendation details")
     decision: str = Field(..., description="Decision code, such as A")
     decision_details: str | None = Field(default=None, description="Decision details")
@@ -825,8 +918,6 @@ class DefectDojoCreateRiskAcceptanceInput(BaseModel):
     reactivate_expired: bool | None = Field(default=None, description="Whether to reactivate findings when expired")
     restart_sla_expired: bool | None = Field(default=None, description="Whether to restart SLA when expired")
     owner: int | None = Field(default=None, description="Owner user ID")
-    accepted_findings: list[int] = Field(..., description="Finding IDs to include in this risk acceptance")
-
 
 class DefectDojoCreateRiskAcceptanceTool(BaseTool):
     name: str = "defectdojo_create_risk_acceptance_tool"
@@ -835,10 +926,11 @@ class DefectDojoCreateRiskAcceptanceTool(BaseTool):
 
     def _run(
         self,
-        base_url: str,
-        api_key: str,
         name: str,
         recommendation: str,
+        accepted_findings: list[int],
+        base_url: str | None = None,
+        api_key: str | None = None,
         recommendation_details: str | None = None,
         decision: str = "A",
         decision_details: str | None = None,
@@ -849,11 +941,10 @@ class DefectDojoCreateRiskAcceptanceTool(BaseTool):
         reactivate_expired: bool | None = None,
         restart_sla_expired: bool | None = None,
         owner: int | None = None,
-        accepted_findings: list[int] | None = None,
     ) -> dict:
         return defectdojo_create_risk_acceptance_tool(
-            base_url=base_url,
-            api_key=api_key,
+            base_url=base_url or settings.defectdojo_base_url,
+            api_key=api_key or settings.defectdojo_api_key,
             name=name,
             recommendation=recommendation,
             recommendation_details=recommendation_details,
@@ -866,7 +957,7 @@ class DefectDojoCreateRiskAcceptanceTool(BaseTool):
             reactivate_expired=reactivate_expired,
             restart_sla_expired=restart_sla_expired,
             owner=owner,
-            accepted_findings=accepted_findings or [],
+            accepted_findings=accepted_findings,
         )
 
 
@@ -921,3 +1012,50 @@ def defectdojo_create_risk_acceptance_tool(
     )
     response.raise_for_status()
     return response.json()
+
+
+class DefectDojoCreateApprovedRiskAcceptanceInput(BaseModel):
+    finding_id: int = Field(..., description="Approved DefectDojo finding ID")
+    title: str = Field(..., description="Finding title")
+    reason: str = Field(..., description="Human-approved risk acceptance reason")
+    expiration_date: str = Field(
+        ...,
+        description="Expiration date or datetime in ISO 8601 format",
+    )
+    reactivate_expired: bool = Field(
+        ...,
+        description="Whether to reactivate the finding after expiration",
+    )
+    restart_sla_expired: bool = Field(
+        ...,
+        description="Whether to restart SLA after expiration",
+    )
+
+
+class DefectDojoCreateApprovedRiskAcceptanceTool(BaseTool):
+    name: str = "defectdojo_create_approved_risk_acceptance_tool"
+    description: str = "Create one risk acceptance that has already passed human approval."
+    args_schema: type[BaseModel] = DefectDojoCreateApprovedRiskAcceptanceInput
+
+    def _run(
+        self,
+        finding_id: int,
+        title: str,
+        reason: str,
+        expiration_date: str,
+        reactivate_expired: bool,
+        restart_sla_expired: bool,
+    ) -> dict:
+        return defectdojo_create_risk_acceptance_tool(
+            base_url=settings.defectdojo_base_url,
+            api_key=settings.defectdojo_api_key,
+            name=f"Approved risk acceptance: {title}",
+            recommendation="A",
+            recommendation_details=reason,
+            decision="A",
+            decision_details=reason,
+            expiration_date=expiration_date,
+            reactivate_expired=reactivate_expired,
+            restart_sla_expired=restart_sla_expired,
+            accepted_findings=[finding_id],
+        )

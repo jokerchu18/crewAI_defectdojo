@@ -1,44 +1,3 @@
-# crewAI_defectdojo
-## 项目目录总览
-```
-defectdojo_crewai/
-├── crews/
-│   ├── __init__.py
-│   └── vulnerability_lifecycle.py  # 漏洞生命周期 Crew
-├── agents/
-│   ├── __init__.py
-│   ├── base.py                     # 基础 Agent 类
-│   ├── scan_import.py              # Scan Import Agent
-│   ├── deduplication.py            # Deduplication Agent
-│   ├── triage.py                   # Triage Agent
-│   ├── remediation.py              # Remediation Agent
-│   ├── risk_acceptance.py          # Risk Acceptance Agent
-│   ├── jira_sync.py                # Jira Sync Agent
-│   └── verification.py             # Verification Agent
-├── tasks/
-│   ├── __init__.py
-│   ├── import_tasks.py             # 导入相关任务
-│   ├── dedupe_tasks.py             # 去重相关任务
-│   ├── triage_tasks.py             # 分诊相关任务
-│   ├── remediation_tasks.py        # 修复相关任务
-│   ├── risk_tasks.py               # 风险接受相关任务
-│   ├── jira_tasks.py               # Jira 同步相关任务
-│   └── verification_tasks.py       # 验证关闭相关任务
-├── tools/
-│   ├── __init__.py
-│   ├── defectdojo_api.py           # DefectDojo REST API 客户端
-│   ├── jira_client.py              # Jira API 客户端
-│   ├── sla_engine.py               # SLA 计算引擎
-│   └── notification_service.py     # 通知服务
-├── config/
-│   ├── __init__.py
-│   ├── settings.py                 # 配置管理
-│   └── llm_config.py               # LLM 配置
-├── models/
-│   ├── __init__.py
-│   └── schemas.py                  # Pydantic 数据模型
-└── main.py                         # 入口文件
-```
 
 ## 人机交互路由
 
@@ -60,7 +19,7 @@ WEB_UPLOAD_DIR=data/uploads
 WEB_UPLOAD_MAX_BYTES=20971520
 ```
 
-启动自然语言路由与人工审批：
+启动自然语言路由与人工审批，启动方式：
 
 ```powershell
 python -m defectdojo_crewai.main chat
@@ -75,71 +34,23 @@ python -m defectdojo_crewai.main chat
 查询 Product 1 的漏洞
 ```
 
+代码接口同时支持显式传入上下文。显式 ID 的优先级高于 Router 从自然语言中提取的 ID：
+
+```python
+from defectdojo_crewai.models.schemas import ChatRequest, ConversationContext
+from defectdojo_crewai.services.routing_service import handle_chat_request
+
+response = handle_chat_request(
+    ChatRequest(
+        session_id="user-session-001",
+        message="继续分诊刚才导入的漏洞",
+        context=ConversationContext(test_id=18, product_id=1),
+    )
+)
+```
+
 同一 `session_id` 下，导入 Agent 返回的 `test_id`、`product_id` 和
 `engagement_id` 会自动保存，后续消息可以直接使用“刚才的扫描”等表达。
-
-## Redis Session
-
-会话上下文保存在 Redis 中，不再依赖进程内字典。先安装客户端：
-
-```powershell
-python -m pip install "redis>=5,<7"
-```
-
-本地可以使用 Docker 启动 Redis：
-
-```powershell
-docker run --name defectdojo-redis -p 6379:6379 -d redis:7-alpine
-```
-
-`.env` 配置：
-
-```dotenv
-REDIS_URL=redis://localhost:6379/0
-SESSION_REDIS_PREFIX=defectdojo:session
-SESSION_TTL_SECONDS=86400
-SESSION_REFRESH_TTL_ON_READ=true
-REDIS_SOCKET_TIMEOUT_SECONDS=5
-```
-
-默认 Session 有效期为 24 小时。开启 `SESSION_REFRESH_TTL_ON_READ` 后，
-每次读取会话都会重新计算有效期。多个应用进程只要连接同一个 Redis，
-就可以共享相同的 `session_id` 上下文。
-
-## PostgreSQL 对话记录
-
-对话消息（用户提问与 Agent 最终答复，含各步骤执行结果）持久化在
-PostgreSQL 中，刷新页面或重启服务后可恢复历史对话。先安装客户端：
-
-```powershell
-python -m pip install "psycopg[binary,pool]"
-```
-
-本地使用 Docker 启动 PostgreSQL（端口 5433，避免与 DefectDojo 自带的
-postgres 冲突；数据保存在命名卷 `defectdojo-chat-pgdata` 中）：
-
-```powershell
-docker run -d --name defectdojo-chat-postgres --restart unless-stopped `
-  -e POSTGRES_USER=chat -e POSTGRES_PASSWORD=chatpass -e POSTGRES_DB=chat_history `
-  -p 5433:5432 -v defectdojo-chat-pgdata:/var/lib/postgresql `
-  postgres:18.4-alpine
-```
-
-注意：postgres 18+ 镜像的数据目录挂载点是 `/var/lib/postgresql`（不再是
-旧版的 `/var/lib/postgresql/data`），挂错会导致容器反复重启。
-
-`.env` 配置：
-
-```dotenv
-CHAT_DATABASE_URL=postgresql://chat:chatpass@localhost:5433/chat_history
-CHAT_DATABASE_POOL_SIZE=5
-CHAT_DATABASE_TIMEOUT_SECONDS=5
-SESSION_HISTORY_MAX_MESSAGES=200
-```
-
-表结构（`chat_messages`）在服务启动时自动创建。每个会话最多保留
-`SESSION_HISTORY_MAX_MESSAGES` 条消息，且查询时只返回 `SESSION_TTL_SECONDS`
-内的消息，与 Redis 会话上下文的过期策略保持一致。
 
 风险接受 Agent 只生成预审候选项，不会直接修改 DefectDojo。存在 `Accept`
 候选项时，系统会生成持久化待审批记录：
@@ -151,11 +62,12 @@ approve <approval_id> 32,35
 reject <approval_id>
 ```
 
-默认审批数据库为 `data/approvals.db`。如需放到其他位置，可在 `.env` 中配置：
-c
+默认审批数据库为 `data/workflow.db`。如需放到其他位置，可在 `.env` 中配置：
+
 ```dotenv
 APPROVAL_DATABASE_PATH=data/approvals.db
 ```
+## 注册函数解耦人工审批逻辑
 
 新的人工审批类型通过 `register_action("action.type")` 注册执行函数，即可复用同一套
 待审批、批准、拒绝、状态记录与失败记录逻辑。

@@ -56,9 +56,9 @@ def main():
     parser.add_argument(
         "mode",
         nargs="?",
-        choices=["chat"],
+        choices=["chat", "web"],
         default="chat",
-        help="chat 启动人机交互路由与审批。",
+        help="chat 启动终端交互；web 启动浏览器界面与 HTTP API。",
     )
     args = parser.parse_args()
 
@@ -66,6 +66,17 @@ def main():
         from defectdojo_crewai.chat import run_chat
 
         run_chat()
+        return
+
+    if args.mode == "web":
+        import uvicorn
+
+        uvicorn.run(
+            "defectdojo_crewai.web:app",
+            host="127.0.0.1",
+            port=8000,
+            reload=False,
+        )
         return
 
 if __name__ == "__main__":

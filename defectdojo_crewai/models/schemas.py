@@ -1,7 +1,7 @@
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # risk_acceptance_review_agent's ouput
 
@@ -37,16 +37,24 @@ class RiskAcceptanceExecutionResult(BaseModel):
     results: list[RiskAcceptanceExecutionItem] = Field(default_factory=list)
 
 
+IntentName = Literal[
+    "risk_acceptance",
+    "deduplication",
+    "triage",
+    "remediation",
+    "verification",
+    "import_scan",
+    "query_findings",
+    "unknown",
+]
+
+
 class UserIntent(BaseModel):
-    intent: Literal[
-        "risk_acceptance",
-        "triage",
-        "remediation",
-        "verification",
-        "import_scan",
-        "query_findings",
-        "unknown",
-    ]
+    # forbid extras so a lone WorkflowStep fragment cannot masquerade as an
+    # intent (or plan) when the router emits malformed JSON
+    model_config = ConfigDict(extra="forbid")
+
+    intent: IntentName
     product_id: int | None = None
     test_id: int | None = None
     finding_ids: list[int] = Field(default_factory=list)
@@ -54,6 +62,42 @@ class UserIntent(BaseModel):
     engagement_id: int | None = None
     scan_type: str | None = None
     file_path: str | None = None
+    message: str = ""
+
+
+class WorkflowStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: str = Field(..., description="Unique step id in this workflow")
+    intent: IntentName
+    product_id: int | None = None
+    test_id: int | None = None
+    finding_ids: list[int] = Field(default_factory=list)
+    severity: str | None = None
+    engagement_id: int | None = None
+    scan_type: str | None = None
+    file_path: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    instruction: str = ""
+
+    def to_user_intent(self) -> UserIntent:
+        return UserIntent(
+            intent=self.intent,
+            product_id=self.product_id,
+            test_id=self.test_id,
+            finding_ids=self.finding_ids,
+            severity=self.severity,
+            engagement_id=self.engagement_id,
+            scan_type=self.scan_type,
+            file_path=self.file_path,
+            message=self.instruction,
+        )
+
+
+class WorkflowPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    steps: list[WorkflowStep] = Field(default_factory=list)
     message: str = ""
 
 
@@ -75,6 +119,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     session_id: str
     intent: UserIntent
+    plan: WorkflowPlan | None = None
     context: ConversationContext
     result: dict[str, Any]
 

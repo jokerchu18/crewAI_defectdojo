@@ -7,13 +7,19 @@ from defectdojo_crewai.services.approval_service import (
     pending_approvals,
 )
 from defectdojo_crewai.services.approval_store import init_approval_store
+from defectdojo_crewai.services.message_store import init_message_store
 from defectdojo_crewai.services.routing_service import handle_chat_request
-from defectdojo_crewai.services.session_service import get_session_context
+from defectdojo_crewai.services.session_service import (
+    get_session_context,
+    init_session_store,
+)
 
 # chat入口文件
 
 def run_chat() -> None:
     init_approval_store()
+    init_session_store()
+    init_message_store()
     session_id = str(uuid4())
     _print_help()
 
@@ -133,7 +139,9 @@ def _print_json(value) -> None:
 def _print_help() -> None:
     print(
         "\n可用命令：\n"
-        "  直接输入自然语言，例如：评估 Product 1 的 Medium 漏洞风险接受\n"
+        "  单 Agent：评估 Product 1 的漏洞修复建议\n"
+        "  多 Agent：导入报告，然后分诊并为导入产品制定修复计划\n"
+        "  带审批：查询 Product 1，并评估 Medium 以下漏洞的风险接受\n"
         "  approvals                         查看待审批操作\n"
         "  context                           查看当前会话保存的 ID\n"
         "  approve <approval_id>             批准该审批中的全部 findings\n"

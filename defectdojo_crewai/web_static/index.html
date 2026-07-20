@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="DefectDojo 与 CrewAI 漏洞生命周期对话、报告上传和人工审批工作台"
+    />
+    <title>Sentinel Garden | 漏洞生命周期工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">S</span>
+          <div>
+            <p class="eyebrow">DEFECTDOJO + CREWAI</p>
+            <h1>Sentinel Garden</h1>
+          </div>
+        </div>
+        <div class="session-pill">
+          <span class="pulse"></span>
+          <span id="session-label">新会话</span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="left-rail">
+          <section class="card upload-card">
+            <div class="section-heading">
+              <span class="index">01</span>
+              <div>
+                <p>扫描报告</p>
+                <h2>导入前暂存</h2>
+              </div>
+            </div>
+            <label class="drop-zone" id="drop-zone" for="report-file">
+              <input
+                id="report-file"
+                type="file"
+                accept=".sarif,.nessus,.xml,.json"
+              />
+              <span class="upload-glyph">UP</span>
+              <strong>拖放扫描报告</strong>
+              <small>SARIF · Nessus · XML · JSON</small>
+            </label>
+            <div id="upload-status" class="upload-status">尚未选择文件</div>
+            <button id="import-suggestion" class="soft-button" disabled>
+              在对话中导入此报告
+            </button>
+          </section>
+
+          <section class="card context-card">
+            <div class="section-heading">
+              <span class="index">02</span>
+              <div>
+                <p>工作记忆</p>
+                <h2>当前上下文</h2>
+              </div>
+            </div>
+            <dl id="context-list" class="context-list">
+              <div><dt>Product</dt><dd>--</dd></div>
+              <div><dt>Test</dt><dd>--</dd></div>
+              <div><dt>Findings</dt><dd>--</dd></div>
+            </dl>
+            <button id="clear-session" class="text-button">
+              清除本会话上下文
+            </button>
+          </section>
+        </aside>
+
+        <section class="chat-panel card">
+          <div class="chat-header">
+            <div>
+              <p class="eyebrow">NATURAL LANGUAGE CONTROL</p>
+              <h2>工作流对话</h2>
+            </div>
+            <span id="workflow-state" class="state-chip">等待指令</span>
+          </div>
+          <div id="messages" class="messages" aria-live="polite">
+            <article class="message assistant-message">
+              <span class="message-avatar">SG</span>
+              <div>
+                <p>你好，我会把你的请求规划成单个 Agent 或多 Agent 工作流。</p>
+                <small>例如：导入报告、去重、分诊并制定修复计划。</small>
+              </div>
+            </article>
+          </div>
+          <form id="chat-form" class="composer">
+            <textarea
+              id="chat-input"
+              rows="3"
+              placeholder="描述你希望完成的漏洞工作流..."
+              required
+            ></textarea>
+            <div class="composer-bottom">
+              <span>会话 ID 保存在浏览器本地</span>
+              <button id="send-button" type="submit">发送 <span>GO</span></button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="approval-rail">
+          <div class="approval-heading">
+            <div>
+              <p class="eyebrow">HUMAN IN THE LOOP</p>
+              <h2>待审核操作</h2>
+            </div>
+            <button
+              id="refresh-approvals"
+              class="icon-button"
+              title="刷新审批"
+            >
+              R
+            </button>
+          </div>
+          <div id="approval-list" class="approval-list">
+            <div class="empty-state">正在加载待审批操作...</div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <template id="approval-template">
+      <article class="approval-card">
+        <div class="approval-card-top">
+          <span class="risk-tag">HIGH</span>
+          <time></time>
+        </div>
+        <h3></h3>
+        <p class="approval-description"></p>
+        <div class="candidate-list"></div>
+        <div class="approval-actions">
+          <button class="reject-button">拒绝</button>
+          <button class="approve-button">批准执行</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

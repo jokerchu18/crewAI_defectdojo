@@ -8,3 +8,13 @@ deduplicate_task = Task(
     agent=deduplication_agent,
     context=[import_scan_task],
 )
+
+
+deduplicate_request_task = Task(
+    description=(
+        "接收 DefectDojo test_id={test_id}，执行去重流程的基础框架。"
+        "当前阶段不调用外部工具，不修改 DefectDojo 数据。"
+    ),
+    expected_output="包含 test_id 和当前框架执行状态的去重任务结果",
+    agent=deduplication_agent,
+)

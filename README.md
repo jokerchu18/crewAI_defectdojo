@@ -1,8 +1,6 @@
+# 操作指南及功能说明
 
-## 人机交互路由
-
-<<<<<<< HEAD
-### Web 工作台
+## Web 工作台
 
 启动浏览器界面、文件暂存、对话工作流和人工审批面板：
 
@@ -20,28 +18,15 @@ WEB_UPLOAD_DIR=data/uploads
 WEB_UPLOAD_MAX_BYTES=20971520
 ```
 
-启动自然语言路由与人工审批：
-=======
-启动自然语言路由与人工审批，启动方式：
->>>>>>> a6f1c437134f5f3681743105d15435d725577a11
+同一 `session_id` 下，导入 Agent 返回的 `test_id`、`product_id` 和
+`engagement_id` 会自动保存，后续消息可以直接使用“刚才的扫描”等表达。
 
-```powershell
-python -m defectdojo_crewai.main chat
-```
-
-可直接输入：
-
-```text
-评估 Product 1 的 Medium 漏洞风险接受
-对 Product 1 生成修复计划
-分诊 Test 18 下的漏洞
-查询 Product 1 的漏洞
-```
+## 增加Working Memory，支持一次对话内记忆输入过的id
 
 同一 `session_id` 下，导入 Agent 返回的 `test_id`、`product_id` 和
 `engagement_id` 会自动保存，后续消息可以直接使用“刚才的扫描”等表达。
 
-## Redis Session
+### Redis Session
 
 会话上下文保存在 Redis 中，不再依赖进程内字典。先安装客户端：
 
@@ -71,8 +56,7 @@ REDIS_SOCKET_TIMEOUT_SECONDS=5
 
 ## PostgreSQL 对话记录
 
-对话消息（用户提问与 Agent 最终答复，含各步骤执行结果）持久化在
-PostgreSQL 中，刷新页面或重启服务后可恢复历史对话。先安装客户端：
+对话消息（用户提问与 Agent 最终答复，含各步骤执行结果）持久化在PostgreSQL 中，刷新页面或重启服务后可恢复历史对话。先安装客户端：
 
 ```powershell
 python -m pip install "psycopg[binary,pool]"
@@ -103,28 +87,31 @@ SESSION_HISTORY_MAX_MESSAGES=200
 表结构（`chat_messages`）在服务启动时自动创建。每个会话最多保留
 `SESSION_HISTORY_MAX_MESSAGES` 条消息，且查询时只返回 `SESSION_TTL_SECONDS`
 内的消息，与 Redis 会话上下文的过期策略保持一致。
-## 增加Working Memory，支持一次对话内记忆输入过的id
 
-同一 `session_id` 下，导入 Agent 返回的 `test_id`、`product_id` 和
-`engagement_id` 会自动保存，后续消息可以直接使用“刚才的扫描”等表达。
+### 怎样查看
+进入容器里的 psql（数据库名 chat_history，用户 chat）：
+```
+docker exec -it defectdojo-chat-postgres psql -U chat -d chat_history
+```
+进去之后常用的命令：
 
-## risk_acceptance agent 拆分为预审与执行agent，待审批finding列表写入数据库
-
-风险接受 Agent 只生成预审候选项，不会直接修改 DefectDojo。存在 `Accept`
-候选项时，系统会生成持久化待审批记录：
-
-```text
-approvals
-approve <approval_id>
-approve <approval_id> 32,35
-reject <approval_id>
+```
+\dt                      -- 列出所有表
+\d chat_messages         -- 查看表结构和索引
+-- 最近 10 条消息
+SELECT id, session_id, role, left(content, 40) AS content, created_at
+FROM chat_messages ORDER BY id DESC LIMIT 10;
+-- 某个会话的完整对话（按顺序）
+SELECT role, content, created_at FROM chat_messages
+WHERE session_id = '你的会话ID' ORDER BY id;
+-- 用 JSONB 查询：所有执行失败的回复
+SELECT id, session_id, created_at FROM chat_messages
+WHERE result->>'status' = 'failed';
+-- 每个会话的消息数
+SELECT session_id, count(*) FROM chat_messages GROUP BY session_id;
+\q                       -- 退出
 ```
 
-默认审批数据库为 `data/workflow.db`。如需放到其他位置，可在 `.env` 中配置：
-
-```dotenv
-APPROVAL_DATABASE_PATH=data/approvals.db
-```
 ## 注册函数解耦人工审批逻辑
 
 新的人工审批类型通过 `register_action("action.type")` 注册执行函数，即可复用同一套

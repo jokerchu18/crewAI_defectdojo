@@ -4,6 +4,9 @@ from defectdojo_crewai.agents.risk_acceptance import risk_acceptance_execute_age
 from defectdojo_crewai.config.settings import settings
 from defectdojo_crewai.models.schemas import RiskAcceptanceExecutionResult
 from defectdojo_crewai.services.action_registry import register_action
+from defectdojo_crewai.services.knowledge_prompt import (
+    prepare_task_with_knowledge,
+)
 from defectdojo_crewai.services.output_parser import parse_model_output
 from defectdojo_crewai.tasks.risk_tasks import risk_acceptance_execute_task
 
@@ -14,9 +17,13 @@ def execute_risk_acceptance(payload: dict) -> dict:
     if not approved_candidates:
         raise ValueError("No approved risk acceptance candidates were provided.")
 
+    prepared_task = prepare_task_with_knowledge(
+        risk_acceptance_execute_task,
+        "执行已通过人工审批的 DefectDojo 风险接受",
+    )
     crew = Crew(
         agents=[risk_acceptance_execute_agent],
-        tasks=[risk_acceptance_execute_task],
+        tasks=[prepared_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )

@@ -18,9 +18,6 @@ WEB_UPLOAD_DIR=data/uploads
 WEB_UPLOAD_MAX_BYTES=20971520
 ```
 
-同一 `session_id` 下，导入 Agent 返回的 `test_id`、`product_id` 和
-`engagement_id` 会自动保存，后续消息可以直接使用“刚才的扫描”等表达。
-
 ## 增加Working Memory，支持一次对话内记忆输入过的id
 
 同一 `session_id` 下，导入 Agent 返回的 `test_id`、`product_id` 和
@@ -116,3 +113,48 @@ SELECT session_id, count(*) FROM chat_messages GROUP BY session_id;
 
 新的人工审批类型通过 `register_action("action.type")` 注册执行函数，即可复用同一套
 待审批、批准、拒绝、状态记录与失败记录逻辑。
+
+## Qdrant 知识库
+
+RAG 使用 Docker 中运行的 Qdrant，不再使用进程内 FAISS 索引。安装 Python
+客户端依赖：
+
+```powershell
+python -m pip install -r requirements-qdrant.txt
+```
+
+启动 Qdrant：
+
+```powershell
+docker compose -f docker-compose.qdrant.yml up -d
+```
+
+应用运行在宿主机时，`.env` 使用：
+
+```dotenv
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION_NAME=defectdojo_knowledge
+QDRANT_TIMEOUT_SECONDS=30
+QDRANT_PREFER_GRPC=false
+EMBEDDING_PROVIDER=fastembed
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+EMBEDDING_CACHE_DIR=data/models/fastembed
+```
+
+如果应用也运行在同一个 Docker Compose 网络中，将地址改为：
+
+```dotenv
+QDRANT_URL=http://qdrant:6333
+```
+
+使用 Qdrant Cloud 或启用 API Key 的服务时，可以额外配置：
+
+```dotenv
+QDRANT_API_KEY=
+```
+
+知识文档默认放在 `data/knowledge/`。应用会把文档指纹保存在 Qdrant
+metadata 中；指纹一致时直接复用已有 collection，文档发生变化时自动重建。
+`fastembed` 模式在本机 CPU 执行向量化，不需要 Embedding API Key。需要改回
+OpenAI-compatible Embedding 接口时，将 `EMBEDDING_PROVIDER` 设置为 `openai`，
+并配置 `EMBEDDING_API_KEY` 和 `EMBEDDING_BASE_URL`。

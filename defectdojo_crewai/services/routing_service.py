@@ -23,6 +23,9 @@ from defectdojo_crewai.models.schemas import (
 )
 from defectdojo_crewai.services.approval_service import request_approval
 from defectdojo_crewai.services.message_store import append_message
+from defectdojo_crewai.services.knowledge_prompt import (
+    prepare_task_with_knowledge,
+)
 from defectdojo_crewai.services.output_parser import parse_model_output
 from defectdojo_crewai.services.progress_service import (
     begin_progress,
@@ -52,9 +55,10 @@ class _WorkflowStepList(RootModel[list[WorkflowStep]]):
 
 
 def parse_workflow_plan(user_message: str) -> WorkflowPlan:
+    prepared_task = prepare_task_with_knowledge(router_task, user_message)
     crew = Crew(
         agents=[router_agent],
-        tasks=[router_task],
+        tasks=[prepared_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )
@@ -463,11 +467,13 @@ def _run_crew(
     agent,
     task,
     inputs: dict[str, Any],
+    knowledge_query: str,
     output_model=None,
 ) -> dict[str, Any]:
+    prepared_task = prepare_task_with_knowledge(task, knowledge_query)
     crew = Crew(
         agents=[agent],
-        tasks=[task],
+        tasks=[prepared_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )
@@ -484,7 +490,15 @@ def _run_triage(intent: UserIntent) -> dict[str, Any]:
             "status": "need_input",
             "message": "请提供需要分诊的 DefectDojo test_id。",
         }
-    return _run_crew(triage_agent, triage_task, {"test_id": intent.test_id})
+    return _run_crew(
+        triage_agent,
+        triage_task,
+        {"test_id": intent.test_id},
+        knowledge_query=(
+            intent.message
+            or f"DefectDojo test {intent.test_id} 漏洞分诊、有效性与利用性评估"
+        ),
+    )
 
 
 def _run_deduplication(intent: UserIntent) -> dict[str, Any]:
@@ -497,6 +511,10 @@ def _run_deduplication(intent: UserIntent) -> dict[str, Any]:
         deduplication_agent,
         deduplicate_request_task,
         {"test_id": intent.test_id},
+        knowledge_query=(
+            intent.message
+            or f"DefectDojo test {intent.test_id} 漏洞去重规则"
+        ),
     )
 
 
@@ -510,6 +528,10 @@ def _run_remediation(intent: UserIntent) -> dict[str, Any]:
         remediation_agent,
         remediation_request_task,
         {"product_id": intent.product_id},
+        knowledge_query=(
+            intent.message
+            or f"DefectDojo product {intent.product_id} 修复计划、优先级与 SLA"
+        ),
     )
 
 
@@ -524,6 +546,10 @@ def _run_import_scan(intent: UserIntent) -> dict[str, Any]:
         scan_import_agent,
         import_scan_task,
         inputs,
+        knowledge_query=(
+            intent.message
+            or f"{inputs['scan_type']} 扫描报告导入 DefectDojo"
+        ),
         output_model=ImportScanResult,
     )
 
@@ -559,9 +585,20 @@ def _request_risk_acceptance(
             "message": "请在请求中提供 Product ID，例如：评估 Product 1 的风险接受。",
         }
 
+    knowledge_query = (
+        intent.message
+        or (
+            f"DefectDojo product {intent.product_id} 风险接受评估，"
+            f"严重级别 {intent.severity or 'Medium, Low, Info'}"
+        )
+    )
+    prepared_task = prepare_task_with_knowledge(
+        risk_acceptance_request_task,
+        knowledge_query,
+    )
     crew = Crew(
         agents=[risk_acceptance_review_agent],
-        tasks=[risk_acceptance_request_task],
+        tasks=[prepared_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )

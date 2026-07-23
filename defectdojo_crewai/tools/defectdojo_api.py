@@ -1,11 +1,32 @@
 from ctypes.util import test
+from functools import wraps
 from pathlib import Path
+from threading import BoundedSemaphore
 import time
+from typing import Callable, ParamSpec, TypeVar
 from urllib import response
 import httpx
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from defectdojo_crewai.config.settings import settings
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+_DEFECTDOJO_TOOL_SEMAPHORE = BoundedSemaphore(
+    settings.defectdojo_tool_max_concurrency
+)
+
+
+def _limit_defectdojo_tool(func: Callable[P, R]) -> Callable[P, R]:
+    """Bound concurrent DefectDojo tool executions within this process."""
+
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        with _DEFECTDOJO_TOOL_SEMAPHORE:
+            return func(*args, **kwargs)
+
+    return wrapper
 
 # 导入智能体业务规范函数
 
@@ -110,6 +131,7 @@ class DefectDojoImportScanTool(BaseTool):
 #     }
 
 
+@_limit_defectdojo_tool
 def defectdojo_import_scan_tool(
     base_url: str,
     api_key: str,
@@ -180,6 +202,7 @@ class DefectDojoGetFindingsTool(BaseTool):
         )
 
 
+@_limit_defectdojo_tool
 def defectdojo_get_findings_tool(
     base_url: str,
     api_key: str,
@@ -220,6 +243,7 @@ class DefectDojoGetFindingTool(BaseTool):
             test_id=test_id,
         )
 
+@_limit_defectdojo_tool
 def defectdojo_get_finding_tool(
     base_url: str,
     api_key: str,
@@ -262,6 +286,7 @@ class DefectDojoGetFindingByProductIDTool(BaseTool):
             product_id=product_id,
         )
 
+@_limit_defectdojo_tool
 def defectdojo_get_finding_by_product_tool(
     base_url: str,
     api_key: str,
@@ -499,6 +524,7 @@ class DefectDojoUpdateFindingTool(BaseTool):
         )
 
 
+@_limit_defectdojo_tool
 def defectdojo_update_finding_tool(
     finding_id: int,
     base_url: str,
@@ -787,6 +813,7 @@ class DefectDojoVerifyFindingTool(BaseTool):
             api_key=settings.defectdojo_api_key,
         )
 
+@_limit_defectdojo_tool
 def defectdojo_verify_finding_tool(
     finding_id: int,
     base_url: str,
@@ -961,6 +988,7 @@ class DefectDojoCreateRiskAcceptanceTool(BaseTool):
         )
 
 
+@_limit_defectdojo_tool
 def defectdojo_create_risk_acceptance_tool(
     base_url: str,
     api_key: str,

@@ -185,7 +185,10 @@ def handle_chat_request(request: ChatRequest) -> ChatResponse:
 
 
 def _handle_chat_request(request: ChatRequest) -> ChatResponse:
+    # router agent提取workflow plan
     plan = parse_workflow_plan(request.message)
+
+    # 返回给前端工作状态和步骤
     set_progress_steps(
         request.session_id,
         [
@@ -193,10 +196,13 @@ def _handle_chat_request(request: ChatRequest) -> ChatResponse:
             for step in plan.steps
         ],
     )
+
+    # 加入记忆中的Context
     context = _merge_context(
         get_session_context(request.session_id),
         request.context,
     )
+
     step_results: list[dict[str, Any]] = []
     completed_step_ids: set[str] = set()
     representative_intent = UserIntent(
@@ -205,6 +211,7 @@ def _handle_chat_request(request: ChatRequest) -> ChatResponse:
     )
     workflow_status = "completed"
 
+    # 遍历处理工作流
     for index, step in enumerate(plan.steps):
         missing_dependencies = [
             dependency
@@ -235,6 +242,8 @@ def _handle_chat_request(request: ChatRequest) -> ChatResponse:
         update_progress_step(request.session_id, step.step_id, "running")
         result = _execute_intent(intent, request.session_id)
         step_results.append(_step_result(step, result))
+
+        # 更新Context，即各种id 
         context = _updated_context(intent, result, base=context)
 
         status = result.get("status", "completed")
@@ -249,6 +258,7 @@ def _handle_chat_request(request: ChatRequest) -> ChatResponse:
     save_session_context(request.session_id, context)
     final_message = _workflow_message(workflow_status, plan.message, step_results)
     finish_progress(request.session_id, workflow_status, final_message)
+    
     return ChatResponse(
         session_id=request.session_id,
         intent=representative_intent,

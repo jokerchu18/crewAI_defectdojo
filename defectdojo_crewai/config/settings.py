@@ -38,6 +38,9 @@ class Settings:
         self.defectdojo_base_url = os.getenv("DEFECTDOJO_BASE_URL", "http://localhost:8080")
         self.defectdojo_api_key = os.getenv("DEFECTDOJO_API_KEY", "")
         self.defectdojo_engagement_id = int(os.getenv("DEFECTDOJO_ENGAGEMENT_ID", "1"))
+        self.defectdojo_tool_max_concurrency = int(
+            os.getenv("DEFECTDOJO_TOOL_MAX_CONCURRENCY", "8")
+        )
 
         self.default_scan_type = os.getenv("DEFAULT_SCAN_TYPE", "SARIF")
         self.default_scan_file_path = os.getenv(
@@ -164,6 +167,10 @@ class Settings:
 
         if self.session_ttl_seconds <= 0:
             raise ValueError("SESSION_TTL_SECONDS must be greater than 0.")
+        if self.defectdojo_tool_max_concurrency <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_MAX_CONCURRENCY must be greater than 0."
+            )
         if self.session_history_max_messages <= 0:
             raise ValueError(
                 "SESSION_HISTORY_MAX_MESSAGES must be greater than 0."

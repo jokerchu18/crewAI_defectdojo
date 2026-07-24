@@ -109,10 +109,26 @@ SELECT session_id, count(*) FROM chat_messages GROUP BY session_id;
 \q                       -- 退出
 ```
 
-## 注册函数解耦人工审批逻辑
+## 统一写工具审批
 
-新的人工审批类型通过 `register_action("action.type")` 注册执行函数，即可复用同一套
-待审批、批准、拒绝、状态记录与失败记录逻辑。
+所有会修改外部系统的 Agent 工具都必须通过
+`defectdojo_crewai.services.tool_policy.gated_write_tool` 暴露给 Agent。
+Agent 调用时只会保存原始工具名和参数并创建审批，不会执行真实写操作。批准后由
+`tool.execute` executor 从服务端注册表中找到真实工具并直接执行，不再启动拥有写权限的
+执行 Agent。
+
+```python
+tools=[
+    gated_write_tool(
+        DefectDojoUpdateFindingTool(),
+        requested_by="my_agent",
+        risk_level="high",
+    )
+]
+```
+
+读取工具可以直接提供给 Agent。新增写工具时必须使用上述包装器，并确保真实凭据只存在于
+服务端工具实现中。
 
 ## Qdrant 知识库
 

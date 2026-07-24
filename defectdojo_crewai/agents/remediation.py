@@ -1,6 +1,7 @@
 from crewai import Agent, Task
 
 from defectdojo_crewai.config import llm_config
+from defectdojo_crewai.services.tool_policy import gated_write_tool
 from defectdojo_crewai.tools.defectdojo_api import (
     DefectDojoGetFindingByProductIDTool,
     DefectDojoUpdateRemediationTool,
@@ -31,7 +32,12 @@ remediation_agent = Agent(
     ),
     tools=[
         DefectDojoGetFindingByProductIDTool(),
-        DefectDojoUpdateRemediationTool(),
+        gated_write_tool(
+            DefectDojoUpdateRemediationTool(),
+            requested_by="remediation_agent",
+            risk_level="medium",
+            approval_title="Approve remediation field update",
+        ),
     ],
     verbose=True,
     llm=llm_config.getLLM(),

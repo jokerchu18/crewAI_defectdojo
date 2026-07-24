@@ -130,14 +130,64 @@
           <time></time>
         </div>
         <h3></h3>
-        <p class="approval-description"></p>
-        <div class="candidate-list"></div>
-        <div class="approval-actions">
-          <button class="reject-button">拒绝</button>
-          <button class="approve-button">批准执行</button>
-        </div>
+        <p class="approval-summary"></p>
+        <button class="review-button">查看并决定</button>
       </article>
     </template>
+
+    <dialog id="approval-dialog" class="approval-dialog">
+      <section class="approval-prompt">
+        <header class="approval-prompt-header">
+          <div class="permission-glyph">!</div>
+          <div>
+            <p class="eyebrow">PERMISSION REQUEST</p>
+            <h2>允许执行写操作？</h2>
+          </div>
+          <button
+            id="approval-close"
+            class="dialog-close"
+            type="button"
+            aria-label="稍后处理"
+          >
+            ×
+          </button>
+        </header>
+
+        <div class="approval-prompt-body">
+          <div class="approval-prompt-title">
+            <span id="approval-risk" class="risk-tag">HIGH</span>
+            <span id="approval-position" class="approval-position"></span>
+          </div>
+          <h3 id="approval-title"></h3>
+          <p id="approval-description" class="approval-description"></p>
+
+          <dl class="approval-meta">
+            <div>
+              <dt>发起 Agent</dt>
+              <dd id="approval-requester">--</dd>
+            </div>
+            <div>
+              <dt>工作流</dt>
+              <dd id="approval-workflow">--</dd>
+            </div>
+          </dl>
+
+          <div id="approval-tool-calls" class="tool-call-list"></div>
+        </div>
+
+        <footer class="approval-prompt-actions">
+          <button id="approval-reject" class="reject-button" type="button">
+            拒绝
+          </button>
+          <button id="approval-later" class="later-button" type="button">
+            稍后
+          </button>
+          <button id="approval-allow" class="approve-button" type="button">
+            允许一次
+          </button>
+        </footer>
+      </section>
+    </dialog>
 
     <script src="/app.js"></script>
   </body>

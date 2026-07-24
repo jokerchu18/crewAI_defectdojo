@@ -124,12 +124,19 @@ def _print_pending_approvals() -> None:
         print(f"action_type: {approval['action_type']}")
         print(f"risk_level: {approval['risk_level']}")
         candidates = approval["payload"].get("approved_candidates", [])
-        for candidate in candidates:
-            print(
-                f"- finding_id={candidate['finding_id']} "
-                f"severity={candidate['severity']} "
-                f"title={candidate['title']}"
-            )
+        if candidates:
+            for candidate in candidates:
+                print(
+                    f"- finding_id={candidate['finding_id']} "
+                    f"severity={candidate['severity']} "
+                    f"title={candidate['title']}"
+                )
+        else:
+            for tool_call in approval["payload"].get("tool_calls", []):
+                print(
+                    f"- tool={tool_call['tool_name']} "
+                    f"args={tool_call['arguments']}"
+                )
 
 
 def _print_json(value) -> None:

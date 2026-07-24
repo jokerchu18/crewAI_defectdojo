@@ -124,6 +124,13 @@ class ChatResponse(BaseModel):
     result: dict[str, Any]
 
 
+class WriteToolCall(BaseModel):
+    tool_call_id: str = Field(default_factory=lambda: str(uuid4()))
+    tool_name: str
+    arguments: dict[str, Any]
+    requested_by: str
+
+
 class PendingApproval(BaseModel):
     action_type: str
     title: str
@@ -141,5 +148,4 @@ class ApprovalDecision(BaseModel):
     comment: str = ""
     approved_finding_ids: list[int] = Field(default_factory=list)
     edited_payload: dict[str, Any] | None = None
-
 

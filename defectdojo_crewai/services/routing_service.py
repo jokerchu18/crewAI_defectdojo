@@ -15,18 +15,19 @@ from defectdojo_crewai.models.schemas import (
     ChatRequest,
     ChatResponse,
     ConversationContext,
-    PendingApproval,
     RiskAcceptanceReviewResult,
     UserIntent,
     WorkflowPlan,
     WorkflowStep,
 )
-from defectdojo_crewai.services.approval_service import request_approval
 from defectdojo_crewai.services.message_store import append_message
 from defectdojo_crewai.services.knowledge_prompt import (
     prepare_task_with_knowledge,
 )
 from defectdojo_crewai.services.output_parser import parse_model_output
+from defectdojo_crewai.services.risk_acceptance_actions import (
+    build_risk_acceptance_tool_calls,
+)
 from defectdojo_crewai.services.progress_service import (
     begin_progress,
     finish_progress,
@@ -36,6 +37,10 @@ from defectdojo_crewai.services.progress_service import (
 from defectdojo_crewai.services.session_service import (
     get_session_context,
     save_session_context,
+)
+from defectdojo_crewai.services.tool_policy import (
+    capture_write_approvals,
+    request_write_tool_approval,
 )
 from defectdojo_crewai.tasks.import_tasks import import_scan_task
 from defectdojo_crewai.tasks.dedupe_tasks import deduplicate_request_task
@@ -346,13 +351,13 @@ def _execute_intent(intent: UserIntent, session_id: str) -> dict[str, Any]:
     if intent.intent == "risk_acceptance":
         return _request_risk_acceptance(intent, session_id)
     if intent.intent == "deduplication":
-        return _run_deduplication(intent)
+        return _run_deduplication(intent, session_id)
     if intent.intent == "triage":
-        return _run_triage(intent)
+        return _run_triage(intent, session_id)
     if intent.intent == "remediation":
-        return _run_remediation(intent)
+        return _run_remediation(intent, session_id)
     if intent.intent == "import_scan":
-        return _run_import_scan(intent)
+        return _run_import_scan(intent, session_id)
     if intent.intent == "query_findings":
         return _query_findings(intent)
     if intent.intent == "verification":
@@ -479,6 +484,7 @@ def _run_crew(
     inputs: dict[str, Any],
     knowledge_query: str,
     output_model=None,
+    workflow_id: str | None = None,
 ) -> dict[str, Any]:
     prepared_task = prepare_task_with_knowledge(task, knowledge_query)
     crew = Crew(
@@ -487,14 +493,28 @@ def _run_crew(
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )
-    output = crew.kickoff(inputs=inputs)
+    with capture_write_approvals(workflow_id=workflow_id) as approvals:
+        output = crew.kickoff(inputs=inputs)
+    if approvals:
+        return {
+            "status": "waiting_approval",
+            "message": "One or more write tool calls are waiting for approval.",
+            "approval_id": approvals[0]["approval_id"],
+            "approval_ids": [
+                approval["approval_id"] for approval in approvals
+            ],
+            "output": str(output),
+        }
     if output_model is not None:
         parsed = parse_model_output(output, output_model)
         return {"status": "completed", "output": parsed.model_dump()}
     return {"status": "completed", "output": str(output)}
 
 
-def _run_triage(intent: UserIntent) -> dict[str, Any]:
+def _run_triage(
+    intent: UserIntent,
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
     if intent.test_id is None:
         return {
             "status": "need_input",
@@ -508,10 +528,14 @@ def _run_triage(intent: UserIntent) -> dict[str, Any]:
             intent.message
             or f"DefectDojo test {intent.test_id} 漏洞分诊、有效性与利用性评估"
         ),
+        workflow_id=workflow_id,
     )
 
 
-def _run_deduplication(intent: UserIntent) -> dict[str, Any]:
+def _run_deduplication(
+    intent: UserIntent,
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
     if intent.test_id is None:
         return {
             "status": "need_input",
@@ -525,10 +549,14 @@ def _run_deduplication(intent: UserIntent) -> dict[str, Any]:
             intent.message
             or f"DefectDojo test {intent.test_id} 漏洞去重规则"
         ),
+        workflow_id=workflow_id,
     )
 
 
-def _run_remediation(intent: UserIntent) -> dict[str, Any]:
+def _run_remediation(
+    intent: UserIntent,
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
     if intent.product_id is None:
         return {
             "status": "need_input",
@@ -542,10 +570,14 @@ def _run_remediation(intent: UserIntent) -> dict[str, Any]:
             intent.message
             or f"DefectDojo product {intent.product_id} 修复计划、优先级与 SLA"
         ),
+        workflow_id=workflow_id,
     )
 
 
-def _run_import_scan(intent: UserIntent) -> dict[str, Any]:
+def _run_import_scan(
+    intent: UserIntent,
+    workflow_id: str | None = None,
+) -> dict[str, Any]:
     inputs = {
         "base_url": settings.defectdojo_base_url,
         "engagement_id": intent.engagement_id or settings.defectdojo_engagement_id,
@@ -561,6 +593,7 @@ def _run_import_scan(intent: UserIntent) -> dict[str, Any]:
             or f"{inputs['scan_type']} 扫描报告导入 DefectDojo"
         ),
         output_model=ImportScanResult,
+        workflow_id=workflow_id,
     )
 
 
@@ -637,19 +670,25 @@ def _request_risk_acceptance(
             "review_results": all_candidates,
         }
 
-    approval = request_approval(
-        PendingApproval(
-            action_type="risk_acceptance.execute",
-            title=f"Product {intent.product_id} 风险接受审批",
-            description="风险预审 Agent 建议接受以下 findings，需要人工确认后执行。",
-            payload={
-                "product_id": intent.product_id,
-                "approved_candidates": accept_candidates,
-            },
-            risk_level="high",
-            workflow_id=session_id,
-            requested_by="risk_acceptance_review_agent",
-        )
+    requested_by = "risk_acceptance_review_agent"
+    tool_calls = build_risk_acceptance_tool_calls(
+        accept_candidates,
+        requested_by=requested_by,
+    )
+    approval = request_write_tool_approval(
+        tool_calls,
+        title=f"Product {intent.product_id} 风险接受审批",
+        description=(
+            "风险预审 Agent 建议接受以下 findings；批准后将执行已记录的"
+            "创建与更新工具调用。"
+        ),
+        risk_level="high",
+        workflow_id=session_id,
+        requested_by=requested_by,
+        extra_payload={
+            "product_id": intent.product_id,
+            "approved_candidates": accept_candidates,
+        },
     )
 
     return {

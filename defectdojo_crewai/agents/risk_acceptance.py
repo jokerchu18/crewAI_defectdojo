@@ -1,6 +1,7 @@
 from crewai import Agent
 
 from defectdojo_crewai.config import llm_config
+from defectdojo_crewai.services.tool_policy import gated_write_tool
 from defectdojo_crewai.tools.defectdojo_api import (
     DefectDojoCreateApprovedRiskAcceptanceTool,
     DefectDojoGetFindingByProductIDTool,
@@ -36,8 +37,16 @@ risk_acceptance_execute_agent = Agent(
         "你会遍历 approved_candidates 列表，对每个 finding 单独创建风险接受并更新状态。"
     ),
     tools=[
-        DefectDojoCreateApprovedRiskAcceptanceTool(),
-        DefectDojoUpdateRiskAcceptanceTool(),
+        gated_write_tool(
+            DefectDojoCreateApprovedRiskAcceptanceTool(),
+            requested_by="risk_acceptance_execute_agent",
+            risk_level="high",
+        ),
+        gated_write_tool(
+            DefectDojoUpdateRiskAcceptanceTool(),
+            requested_by="risk_acceptance_execute_agent",
+            risk_level="high",
+        ),
     ],
     verbose=True,
     llm=llm_config.getLLM(),
@@ -60,8 +69,16 @@ risk_acceptance_agent = Agent(
         "risk_accepted=True, active=False。"
     ),
     tools=[
-        DefectDojoCreateApprovedRiskAcceptanceTool(),
-        DefectDojoUpdateRiskAcceptanceTool(),
+        gated_write_tool(
+            DefectDojoCreateApprovedRiskAcceptanceTool(),
+            requested_by="risk_acceptance_agent",
+            risk_level="high",
+        ),
+        gated_write_tool(
+            DefectDojoUpdateRiskAcceptanceTool(),
+            requested_by="risk_acceptance_agent",
+            risk_level="high",
+        ),
     ],
     verbose=True,
     llm=llm_config.getLLM(),

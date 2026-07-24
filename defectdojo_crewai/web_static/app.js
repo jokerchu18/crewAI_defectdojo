@@ -2,6 +2,8 @@ const state = {
   sessionId:
     localStorage.getItem("dojo-session-id") || crypto.randomUUID(),
   uploadedFile: null,
+  pendingApprovals: [],
+  activeApprovalId: null,
 };
 
 localStorage.setItem("dojo-session-id", state.sessionId);
@@ -22,6 +24,18 @@ const elements = {
   refreshApprovals: document.querySelector("#refresh-approvals"),
   clearSession: document.querySelector("#clear-session"),
   approvalTemplate: document.querySelector("#approval-template"),
+  approvalDialog: document.querySelector("#approval-dialog"),
+  approvalClose: document.querySelector("#approval-close"),
+  approvalRisk: document.querySelector("#approval-risk"),
+  approvalPosition: document.querySelector("#approval-position"),
+  approvalTitle: document.querySelector("#approval-title"),
+  approvalDescription: document.querySelector("#approval-description"),
+  approvalRequester: document.querySelector("#approval-requester"),
+  approvalWorkflow: document.querySelector("#approval-workflow"),
+  approvalToolCalls: document.querySelector("#approval-tool-calls"),
+  approvalReject: document.querySelector("#approval-reject"),
+  approvalLater: document.querySelector("#approval-later"),
+  approvalAllow: document.querySelector("#approval-allow"),
 };
 
 elements.sessionLabel.textContent = `会话 ${state.sessionId.slice(0, 8)}`;
@@ -388,7 +402,11 @@ function formatBytes(value) {
 async function loadApprovals() {
   try {
     const data = await api("/api/approvals");
-    renderApprovals(data.items);
+    state.pendingApprovals = data.items;
+    renderApprovals(state.pendingApprovals);
+    if (!elements.approvalDialog.open && state.pendingApprovals.length) {
+      openApprovalDialog(state.pendingApprovals[0]);
+    }
   } catch (error) {
     elements.approvals.innerHTML =
       `<div class="empty-state">无法加载审批：${escapeHtml(error.message)}</div>`;
@@ -400,14 +418,14 @@ function renderApprovals(items) {
 
   if (!items.length) {
     elements.approvals.innerHTML =
-      '<div class="empty-state">暂无待审批操作。风险接受建议会在这里暂停，等待人工决定。</div>';
+      '<div class="empty-state">暂无待审批写操作。</div>';
     return;
   }
 
   items.forEach((approval) => {
     const node = elements.approvalTemplate.content.cloneNode(true);
     node.querySelector(".risk-tag").textContent =
-      approval.risk_level.toUpperCase();
+      (approval.risk_level || "high").toUpperCase();
     node.querySelector("time").textContent = new Date(
       approval.created_at,
     ).toLocaleString("zh-CN", {
@@ -415,29 +433,85 @@ function renderApprovals(items) {
       minute: "2-digit",
     });
     node.querySelector("h3").textContent = approval.title;
-    node.querySelector(".approval-description").textContent =
-      approval.description;
-
+    const toolCalls = approval.payload?.tool_calls || [];
     const candidates = approval.payload?.approved_candidates || [];
-    node.querySelector(".candidate-list").innerHTML = candidates
-      .map(
-        (candidate) =>
-          `<div class="candidate">#${candidate.finding_id} · ${escapeHtml(candidate.severity)}<br>${escapeHtml(candidate.title)}</div>`,
-      )
-      .join("");
-
+    const operationCount = toolCalls.length || candidates.length || 1;
+    node.querySelector(".approval-summary").textContent =
+      `${operationCount} 个写操作 · ${approval.requested_by || "unknown agent"}`;
     node
-      .querySelector(".approve-button")
-      .addEventListener("click", () =>
-        decideApproval(approval.approval_id, "approve"),
-      );
-    node
-      .querySelector(".reject-button")
-      .addEventListener("click", () =>
-        decideApproval(approval.approval_id, "reject"),
-      );
+      .querySelector(".review-button")
+      .addEventListener("click", () => openApprovalDialog(approval));
     elements.approvals.append(node);
   });
+}
+
+function openApprovalDialog(approval) {
+  const index = state.pendingApprovals.findIndex(
+    (item) => item.approval_id === approval.approval_id,
+  );
+
+  elements.approvalRisk.textContent =
+    (approval.risk_level || "high").toUpperCase();
+  elements.approvalPosition.textContent =
+    `${Math.max(index + 1, 1)} / ${state.pendingApprovals.length}`;
+  elements.approvalTitle.textContent = approval.title;
+  elements.approvalDescription.textContent = approval.description;
+  elements.approvalRequester.textContent =
+    approval.requested_by || "unknown agent";
+  elements.approvalWorkflow.textContent =
+    approval.workflow_id || "未关联工作流";
+  elements.approvalToolCalls.innerHTML = approvalToolCallMarkup(approval);
+  setApprovalBusy(false);
+
+  state.activeApprovalId = approval.approval_id;
+  if (!elements.approvalDialog.open) {
+    elements.approvalDialog.showModal();
+  }
+}
+
+function approvalToolCallMarkup(approval) {
+  const toolCalls = approval.payload?.tool_calls || [];
+  if (toolCalls.length) {
+    return toolCalls
+      .map((toolCall, index) => {
+        const callId = toolCall.tool_call_id
+          ? toolCall.tool_call_id.slice(0, 8)
+          : "legacy";
+        return `
+          <article class="tool-call">
+            <div class="tool-call-header">
+              <span class="tool-call-name">${index + 1}. ${escapeHtml(toolCall.tool_name)}</span>
+              <span class="tool-call-id">${escapeHtml(callId)}</span>
+            </div>
+            <pre class="tool-call-arguments">${escapeHtml(prettyArguments(toolCall.arguments))}</pre>
+          </article>
+        `;
+      })
+      .join("");
+  }
+
+  const candidates = approval.payload?.approved_candidates || [];
+  if (candidates.length) {
+    return candidates
+      .map(
+        (candidate, index) => `
+          <article class="tool-call">
+            <div class="tool-call-header">
+              <span class="tool-call-name">${index + 1}. risk_acceptance.execute</span>
+              <span class="tool-call-id">finding ${escapeHtml(candidate.finding_id)}</span>
+            </div>
+            <pre class="tool-call-arguments">${escapeHtml(prettyArguments(candidate))}</pre>
+          </article>
+        `,
+      )
+      .join("");
+  }
+
+  return '<div class="empty-state">该审批没有可展示的工具参数。</div>';
+}
+
+function prettyArguments(argumentsValue) {
+  return JSON.stringify(argumentsValue || {}, null, 2);
 }
 
 function escapeHtml(value) {
@@ -454,14 +528,31 @@ function escapeHtml(value) {
   );
 }
 
-async function decideApproval(approvalId, decision) {
-  const action = decision === "approve" ? "批准" : "拒绝";
-  if (!confirm(`确认${action}该风险接受操作？`)) {
+function closeApprovalDialog() {
+  if (elements.approvalDialog.open) {
+    elements.approvalDialog.close();
+  }
+  state.activeApprovalId = null;
+}
+
+function setApprovalBusy(busy) {
+  elements.approvalReject.disabled = busy;
+  elements.approvalLater.disabled = busy;
+  elements.approvalAllow.disabled = busy;
+  elements.approvalClose.disabled = busy;
+  elements.approvalAllow.textContent = busy ? "正在执行..." : "允许一次";
+}
+
+async function decideApproval(decision) {
+  const approvalId = state.activeApprovalId;
+  if (!approvalId) {
     return;
   }
+  const action = decision === "approve" ? "批准" : "拒绝";
 
+  setApprovalBusy(true);
   try {
-    await api(`/api/approvals/${approvalId}/decision`, {
+    const approval = await api(`/api/approvals/${approvalId}/decision`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -469,12 +560,34 @@ async function decideApproval(approvalId, decision) {
         reviewer: "web-user",
       }),
     });
-    addMessage("assistant", `审批 ${approvalId.slice(0, 8)} 已${action}。`);
+    const executed = approval.result?.results?.length || 0;
+    const executionText =
+      decision === "approve" && executed
+        ? `，已执行 ${executed} 个写操作`
+        : "";
+    addMessage(
+      "assistant",
+      `审批 ${approvalId.slice(0, 8)} 已${action}${executionText}。`,
+    );
+    closeApprovalDialog();
     await loadApprovals();
   } catch (error) {
     addMessage("assistant", `审批失败：${error.message}`);
+    setApprovalBusy(false);
   }
 }
+
+elements.approvalReject.addEventListener("click", () =>
+  decideApproval("reject"),
+);
+elements.approvalAllow.addEventListener("click", () =>
+  decideApproval("approve"),
+);
+elements.approvalLater.addEventListener("click", closeApprovalDialog);
+elements.approvalClose.addEventListener("click", closeApprovalDialog);
+elements.approvalDialog.addEventListener("close", () => {
+  state.activeApprovalId = null;
+});
 
 elements.refreshApprovals.addEventListener("click", loadApprovals);
 

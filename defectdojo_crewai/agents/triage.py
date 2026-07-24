@@ -1,5 +1,6 @@
 from crewai import Agent
 from defectdojo_crewai.config import llm_config
+from defectdojo_crewai.services.tool_policy import gated_write_tool
 from defectdojo_crewai.tools.defectdojo_api import (
     DefectDojoGetFindingTool,
     DefectDojoUpdateTriageTool,
@@ -38,9 +39,19 @@ triage_agent = Agent(
         "你必须逐个处理 findings 列表中的每一项，不能跳过，不能只输出总结而不执行工具。"
     ),
     tools=[
-        DefectDojoVerifyFindingTool(),
+        gated_write_tool(
+            DefectDojoVerifyFindingTool(),
+            requested_by="triage_agent",
+            risk_level="medium",
+            approval_title="Approve finding verification",
+        ),
         DefectDojoGetFindingTool(),
-        DefectDojoUpdateTriageTool(),
+        gated_write_tool(
+            DefectDojoUpdateTriageTool(),
+            requested_by="triage_agent",
+            risk_level="medium",
+            approval_title="Approve finding triage update",
+        ),
     ],
     verbose=True,
     llm=llm_config.getLLM(),

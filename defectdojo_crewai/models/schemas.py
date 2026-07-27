@@ -48,6 +48,18 @@ IntentName = Literal[
     "unknown",
 ]
 
+FallbackUsed = Literal[
+    "none",
+    "decision_history",
+    "triage_knowledge",
+    "remediation_pattern",
+    "library",
+    "deterministic_workflow",
+    "kg_auto_inject",
+    "no_match",
+    "qdrant_unavailable",
+]
+
 
 class UserIntent(BaseModel):
     # forbid extras so a lone WorkflowStep fragment cannot masquerade as an
@@ -99,6 +111,12 @@ class WorkflowPlan(BaseModel):
 
     steps: list[WorkflowStep] = Field(default_factory=list)
     message: str = ""
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    fallback_used: FallbackUsed = "none"
+    fallback_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
+    fallback_reason: str | None = None
+    needs_human_review: bool = False
+    context_injections: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ConversationContext(BaseModel):
@@ -148,4 +166,3 @@ class ApprovalDecision(BaseModel):
     comment: str = ""
     approved_finding_ids: list[int] = Field(default_factory=list)
     edited_payload: dict[str, Any] | None = None
-

@@ -16,13 +16,14 @@ router_task = Task(
         "使用 depends_on 表示直接依赖的 step_id。后续步骤需要前一步产生的 ID 时，"
         "不要猜测 ID，保留 null 即可。\n"
         "risk_acceptance 必须放在 steps 的最后，因为该步骤可能暂停等待人工审批。\n"
+        "根据意图和参数提取的明确程度输出 confidence，范围为 0 到 1。\n"
         "单 Agent 请求也必须输出 steps 数组，但数组中只有一个步骤。\n"
         "最终只输出合法 JSON，不要 Markdown。格式必须是："
         "{\"steps\":[{\"step_id\":\"step_1\",\"intent\":\"...\","
         "\"product_id\":null,\"test_id\":null,\"finding_ids\":[],"
         "\"severity\":null,\"engagement_id\":null,\"scan_type\":null,"
         "\"file_path\":null,\"depends_on\":[],\"instruction\":\"...\"}],"
-        "\"message\":\"\"}。"
+        "\"message\":\"\",\"confidence\":0.95}。"
     ),
     expected_output="包含有序 steps 数组的合法 JSON 工作流计划",
     agent=router_agent,

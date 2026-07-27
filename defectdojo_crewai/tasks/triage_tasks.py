@@ -4,7 +4,6 @@ from defectdojo_crewai.agents.triage import triage_agent
 triage_task = Task(
     description=(
         "你将处理一次 DefectDojo 扫描导入后的全部漏洞分诊。"
-        "输入中会提供 test_id、base_url、api_key。"
         "你必须严格按照以下步骤执行，不要跳步："
         "\n"
         "1. 先调用 defectdojo_get_finding_tool，根据 test_id 获取该 test 下的全部 findings。"

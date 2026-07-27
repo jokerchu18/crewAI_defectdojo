@@ -1,141 +1,98 @@
+"""Integration smoke test for four logical Qdrant knowledge partitions."""
+
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
 from uuid import uuid4
 
-from langchain_core.embeddings import Embeddings
-from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
-from defectdojo_crewai.crews import rag_retriever
-
-
-QDRANT_URL = "http://localhost:6333"
-
-
-class DeterministicEmbeddings(Embeddings):
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self._embed(text) for text in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._embed(text)
-
-    @staticmethod
-    def _embed(text: str) -> list[float]:
-        lowered = text.lower()
-        return [
-            float(lowered.count("漏洞") + lowered.count("vulnerability")),
-            float(lowered.count("sla") + lowered.count("期限")),
-            float(lowered.count("风险") + lowered.count("risk")),
-            0.1,
-        ]
+from defectdojo_crewai.config.settings import settings
+from defectdojo_crewai.knowledge.storage import (
+    SOURCE_AUDIT,
+    SOURCE_LIBRARY,
+    SOURCE_REMEDIATION,
+    SOURCE_TRIAGE,
+    build_knowledge_store,
+)
 
 
 def main() -> None:
-    collection_name = f"defectdojo_smoke_{uuid4().hex}"
-    client = QdrantClient(url=QDRANT_URL)
+    collection_name = f"defectdojo_knowledge_smoke_{uuid4().hex}"
+    store = build_knowledge_store(
+        embedding_provider=settings.embedding_provider,
+        embedding_model=settings.embedding_model,
+        embedding_dimensions=settings.embedding_dimensions,
+        embedding_cache_dir=settings.embedding_cache_dir,
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        qdrant_url=settings.qdrant_url,
+        qdrant_api_key=settings.qdrant_api_key,
+        qdrant_collection_name=collection_name,
+        qdrant_timeout_seconds=settings.qdrant_timeout_seconds,
+        qdrant_prefer_grpc=settings.qdrant_prefer_grpc,
+    )
+    client = QdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+    )
 
     try:
         with TemporaryDirectory() as temp_dir:
             knowledge_dir = Path(temp_dir)
-            (knowledge_dir / "sla.md").write_text(
-                "高危漏洞的 SLA 修复期限为 30 天。",
+            (knowledge_dir / "library.md").write_text(
+                "CWE-79 跨站脚本漏洞需要进行输出编码和上下文转义。",
                 encoding="utf-8",
             )
-            (knowledge_dir / "risk.md").write_text(
-                "风险接受必须经过人工审批。",
-                encoding="utf-8",
+            assert store.sync_markdown_library(knowledge_dir) == 1
+            store.upsert_texts(
+                texts=["用户请求导入扫描报告，最终成功完成导入工作流。"],
+                source_type=SOURCE_AUDIT,
+                source_id="workflow-1",
+                metadata=[{"intent": "import_scan", "outcome": "completed"}],
+            )
+            store.upsert_texts(
+                texts=["已批准的误报分诊：CWE-79 在不可达测试端点上关闭。"],
+                source_type=SOURCE_TRIAGE,
+                source_id="approval-1",
+                metadata=[{"severity": "Low", "cwe_id": "79"}],
+            )
+            store.upsert_texts(
+                texts=["已验证修复：升级组件并关闭受影响接口后漏洞已缓解。"],
+                source_type=SOURCE_REMEDIATION,
+                source_id="approval-2",
+                metadata=[{"severity": "High", "cwe_id": "79"}],
             )
 
-            with patch.object(
-                rag_retriever,
-                "OpenAIEmbeddings",
-                return_value=DeterministicEmbeddings(),
-            ):
-                vectorstore = _build(
-                    knowledge_dir,
-                    collection_name,
-                    fingerprint="fingerprint-v1",
-                )
-                matches = rag_retriever.search_knowledge(
-                    vectorstore,
-                    query="漏洞 SLA 修复期限",
-                    k=1,
-                )
-                assert matches
-                assert "30 天" in matches[0]["content"]
-                assert (
-                    matches[0]["metadata"]["knowledge_fingerprint"]
-                    == "fingerprint-v1"
-                )
+            assert store.search(
+                query="如何处理 CWE-79？",
+                source_types=[SOURCE_LIBRARY],
+                k=1,
+            )[0]["metadata"]["source_type"] == SOURCE_LIBRARY
+            assert store.search(
+                query="历史导入请求",
+                source_types=[SOURCE_AUDIT],
+                filters={"intent": "import_scan"},
+                k=1,
+            )[0]["metadata"]["source_type"] == SOURCE_AUDIT
+            assert store.search(
+                query="误报分诊",
+                source_types=[SOURCE_TRIAGE],
+                k=1,
+            )[0]["metadata"]["source_type"] == SOURCE_TRIAGE
+            assert store.search(
+                query="已验证修复",
+                source_types=[SOURCE_REMEDIATION],
+                k=1,
+            )[0]["metadata"]["source_type"] == SOURCE_REMEDIATION
 
-                with patch.object(
-                    QdrantVectorStore,
-                    "from_texts",
-                    side_effect=AssertionError(
-                        "Matching fingerprint should reuse the collection."
-                    ),
-                ):
-                    reused = _build(
-                        knowledge_dir,
-                        collection_name,
-                        fingerprint="fingerprint-v1",
-                    )
-                    reused_matches = rag_retriever.search_knowledge(
-                        reused,
-                        query="人工审批风险接受",
-                        k=1,
-                    )
-                    assert "人工审批" in reused_matches[0]["content"]
-
-                rebuilt = _build(
-                    knowledge_dir,
-                    collection_name,
-                    fingerprint="fingerprint-v2",
-                )
-                rebuilt_matches = rag_retriever.search_knowledge(
-                    rebuilt,
-                    query="漏洞 SLA 修复期限",
-                    k=1,
-                )
-                assert (
-                    rebuilt_matches[0]["metadata"]["knowledge_fingerprint"]
-                    == "fingerprint-v2"
-                )
-
-        count = client.count(
-            collection_name=collection_name,
-            exact=True,
-        ).count
-        assert count == 2
-        print(
-            "Qdrant smoke test passed: create, search, reuse, and rebuild."
-        )
+        count = client.count(collection_name=collection_name, exact=True).count
+        assert count == 4
+        print("Qdrant four-partition smoke test passed.")
     finally:
+        store.close()
         if client.collection_exists(collection_name):
             client.delete_collection(collection_name)
         client.close()
-
-
-def _build(
-    knowledge_dir: Path,
-    collection_name: str,
-    fingerprint: str,
-):
-    return rag_retriever.build_vectorstore(
-        doc_dir=knowledge_dir,
-        embedding_provider="openai",
-        api_key="test-key",
-        base_url=None,
-        embedding_model="test-embedding",
-        embedding_cache_dir=knowledge_dir / "models",
-        qdrant_url=QDRANT_URL,
-        qdrant_api_key=None,
-        qdrant_collection_name=collection_name,
-        qdrant_timeout_seconds=10,
-        qdrant_prefer_grpc=False,
-        knowledge_fingerprint=fingerprint,
-    )
 
 
 if __name__ == "__main__":

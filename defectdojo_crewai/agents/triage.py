@@ -6,6 +6,10 @@ from defectdojo_crewai.tools.defectdojo_api import (
     DefectDojoUpdateTriageTool,
     DefectDojoVerifyFindingTool,
 )
+from defectdojo_crewai.knowledge.tools import (
+    KnowledgeSearchCVEDescriptionTool,
+    KnowledgeSearchSimilarFindingTool,
+)
 
 
 triage_agent = Agent(
@@ -39,6 +43,8 @@ triage_agent = Agent(
         "你必须逐个处理 findings 列表中的每一项，不能跳过，不能只输出总结而不执行工具。"
     ),
     tools=[
+        KnowledgeSearchCVEDescriptionTool(),
+        KnowledgeSearchSimilarFindingTool(),
         gated_write_tool(
             DefectDojoVerifyFindingTool(),
             requested_by="triage_agent",

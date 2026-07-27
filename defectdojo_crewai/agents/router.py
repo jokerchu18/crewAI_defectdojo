@@ -1,6 +1,9 @@
 from crewai import Agent
 
 from defectdojo_crewai.config import llm_config
+from defectdojo_crewai.knowledge.tools import (
+    KnowledgeSearchDecisionHistoryTool,
+)
 
 
 router_agent = Agent(
@@ -12,7 +15,8 @@ router_agent = Agent(
         "scan_type 和 file_path。"
     ),
     backstory=(
-        "你只负责规划和参数提取，不调用工具，也不修改 DefectDojo。"
+        "你只负责规划和参数提取，不修改 DefectDojo。"
+        "仅在当前请求含义不明确时，可以调用只读的历史决策检索工具。"
         "import_scan 表示导入扫描报告；deduplication 表示漏洞去重；"
         "triage 表示分诊和有效性验证；"
         "remediation 表示修复计划和 SLA 管理；risk_acceptance 表示风险接受预审；"
@@ -22,6 +26,7 @@ router_agent = Agent(
         "风险接受只负责生成预审步骤，实际接受仍必须经过人工审批。"
         "risk_acceptance 必须是工作流的最后一个步骤，因为它可能暂停等待人工审批。"
     ),
+    tools=[KnowledgeSearchDecisionHistoryTool()],
     verbose=True,
     llm=llm_config.getLLM(),
 )

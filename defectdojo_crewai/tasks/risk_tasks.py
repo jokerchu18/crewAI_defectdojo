@@ -5,7 +5,7 @@ from defectdojo_crewai.tasks.remediation_tasks import remediation_task
 
 risk_acceptance_review_task = Task(
     description=(
-        "基于 remediation_task 的输出，评估每个 finding 是否应进行风险接受。\n"
+        "评估每个 finding 是否应进行风险接受。\n"
         "规则如下：\n"
         "1. 只允许 severity 为 Medium、Low、Info 的 finding 输出 Accept。\n"
         "2. High 和 Critical 必须输出 Reject。\n"

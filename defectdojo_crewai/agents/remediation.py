@@ -6,6 +6,9 @@ from defectdojo_crewai.tools.defectdojo_api import (
     DefectDojoGetFindingByProductIDTool,
     DefectDojoUpdateRemediationTool,
 )
+from defectdojo_crewai.knowledge.tools import (
+    KnowledgeSearchRemediationPatternTool,
+)
 
 remediation_agent = Agent(
     role="漏洞修复跟踪与SLA管理专家",
@@ -31,6 +34,7 @@ remediation_agent = Agent(
         "你不能只给笼统总结，必须输出清晰的优先级列表和SLA告警结果。"
     ),
     tools=[
+        KnowledgeSearchRemediationPatternTool(),
         DefectDojoGetFindingByProductIDTool(),
         gated_write_tool(
             DefectDojoUpdateRemediationTool(),

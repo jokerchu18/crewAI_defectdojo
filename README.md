@@ -130,16 +130,25 @@ tools=[
 读取工具可以直接提供给 Agent。新增写工具时必须使用上述包装器，并确保真实凭据只存在于
 服务端工具实现中。
 
-## Qdrant 知识库
+## Qdrant 知识层
 
-RAG 使用 Docker 中运行的 Qdrant，不再使用进程内 FAISS 索引。安装 Python
-客户端依赖：
+RAG 使用 Docker 中运行的 Qdrant 和本地 BGE-M3 Embedding 服务，不再使用进程内
+FAISS 索引。知识集合通过 `source_type` 分为四个逻辑分区：
+
+| source_type | 内容 | 写入时机 | 读取方 |
+| --- | --- | --- | --- |
+| `library` | Markdown、CWE/CVE/OWASP 标准资料 | Markdown 增量同步 | Scan Import、Triage、Remediation |
+| `audit` | Router 请求、工作流计划与 outcome | 工作流结束后 | Router |
+| `triage` | 已批准且成功执行的分诊、误报、风险接受结果 | 审批写工具成功后 | Triage |
+| `remediation` | 明确标记为 `is_mitigated=true` 的修复结果 | 审批写工具成功后 | Remediation |
+
+安装 Python 客户端依赖：
 
 ```powershell
 python -m pip install -r requirements-qdrant.txt
 ```
 
-启动 Qdrant：
+启动 Qdrant 与 BGE-M3：
 
 ```powershell
 docker compose -f docker-compose.qdrant.yml up -d
@@ -152,9 +161,12 @@ QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION_NAME=defectdojo_knowledge
 QDRANT_TIMEOUT_SECONDS=30
 QDRANT_PREFER_GRPC=false
-EMBEDDING_PROVIDER=fastembed
-EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
-EMBEDDING_CACHE_DIR=data/models/fastembed
+EMBEDDING_PROVIDER=tei
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_BASE_URL=http://localhost:8081/v1
+EMBEDDING_API_KEY=local-bge-m3
+KNOWLEDGE_MIN_SIMILARITY=0.35
 ```
 
 如果应用也运行在同一个 Docker Compose 网络中，将地址改为：
@@ -169,8 +181,11 @@ QDRANT_URL=http://qdrant:6333
 QDRANT_API_KEY=
 ```
 
-知识文档默认放在 `data/knowledge/`。应用会把文档指纹保存在 Qdrant
-metadata 中；指纹一致时直接复用已有 collection，文档发生变化时自动重建。
-`fastembed` 模式在本机 CPU 执行向量化，不需要 Embedding API Key。需要改回
-OpenAI-compatible Embedding 接口时，将 `EMBEDDING_PROVIDER` 设置为 `openai`，
-并配置 `EMBEDDING_API_KEY` 和 `EMBEDDING_BASE_URL`。
+知识文档默认放在 `data/knowledge/`。文档按稳定 chunk ID 和内容哈希增量同步，
+变更时只更新发生变化的 chunk，并删除已不存在的 chunk。BGE-M3 通过本机
+`http://localhost:8081/v1/embeddings` 提供 OpenAI-compatible 接口，不需要云端
+API Key。
+
+切换 Embedding 模型或向量维度时必须重建集合。可以先停止应用，再删除
+`defectdojo_knowledge` 并重新启动应用；启动时会创建 1024 维集合、创建 payload
+索引，并同步 `library` 分区。

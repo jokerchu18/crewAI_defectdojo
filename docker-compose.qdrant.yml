@@ -8,5 +8,21 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
 
+  bge-m3:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    restart: unless-stopped
+    command:
+      - --model-id
+      - BAAI/bge-m3
+      - --served-model-name
+      - BAAI/bge-m3
+      - --port
+      - "80"
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - bge_m3_cache:/data
+
 volumes:
   qdrant_storage:
+  bge_m3_cache:

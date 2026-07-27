@@ -10,6 +10,9 @@ from defectdojo_crewai.services.approval_store import (
     update_approval,
 )
 from defectdojo_crewai.services import action_executors as _action_executors
+from defectdojo_crewai.knowledge.events import (
+    enqueue_approved_execution,
+)
 
 
 def request_approval(action: PendingApproval) -> dict[str, Any]:
@@ -57,6 +60,14 @@ def decide_approval(decision: ApprovalDecision) -> dict[str, Any]:
         update_approval(
             decision.approval_id,
             status="completed",
+            result=result,
+        )
+        enqueue_approved_execution(
+            approval={
+                **approval,
+                "payload": payload,
+                "reviewer": decision.reviewer,
+            },
             result=result,
         )
     except Exception as exc:

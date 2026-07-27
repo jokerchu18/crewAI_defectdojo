@@ -83,6 +83,17 @@ class Settings:
             "EMBEDDING_MODEL",
             default_embedding_model,
         )
+        default_embedding_dimensions = {
+            "fastembed": 512,
+            "tei": 1024,
+            "openai": 1536,
+        }.get(self.embedding_provider, 1024)
+        self.embedding_dimensions = int(
+            os.getenv(
+                "EMBEDDING_DIMENSIONS",
+                str(default_embedding_dimensions),
+            )
+        )
         self.embedding_cache_dir = Path(
             os.getenv(
                 "EMBEDDING_CACHE_DIR",
@@ -122,6 +133,21 @@ class Settings:
         self.qdrant_prefer_grpc = get_bool_env(
             "QDRANT_PREFER_GRPC",
             False,
+        )
+        self.knowledge_min_similarity = float(
+            os.getenv("KNOWLEDGE_MIN_SIMILARITY", "0.35")
+        )
+        self.router_fallback_confidence_threshold = float(
+            os.getenv("ROUTER_FALLBACK_CONFIDENCE_THRESHOLD", "0.7")
+        )
+        self.router_fallback_top_k = int(
+            os.getenv("ROUTER_FALLBACK_TOP_K", "4")
+        )
+        self.router_fallback_min_similarity = float(
+            os.getenv("ROUTER_FALLBACK_MIN_SIMILARITY", "0.75")
+        )
+        self.router_fallback_min_consensus = int(
+            os.getenv("ROUTER_FALLBACK_MIN_CONSENSUS", "2")
         )
 
         self.crew_verbose = get_bool_env("CREW_VERBOSE", True)
@@ -191,9 +217,29 @@ class Settings:
             raise ValueError("KNOWLEDGE_TOP_K must be greater than 0.")
         if self.knowledge_max_chars <= 0:
             raise ValueError("KNOWLEDGE_MAX_CHARS must be greater than 0.")
-        if self.embedding_provider not in {"fastembed", "openai"}:
+        if self.embedding_provider not in {"fastembed", "openai", "tei"}:
             raise ValueError(
-                "EMBEDDING_PROVIDER must be 'fastembed' or 'openai'."
+                "EMBEDDING_PROVIDER must be 'fastembed', 'tei', or 'openai'."
+            )
+        if self.embedding_dimensions <= 0:
+            raise ValueError("EMBEDDING_DIMENSIONS must be greater than 0.")
+        if not 0 <= self.knowledge_min_similarity <= 1:
+            raise ValueError(
+                "KNOWLEDGE_MIN_SIMILARITY must be between 0 and 1."
+            )
+        if not 0 <= self.router_fallback_confidence_threshold <= 1:
+            raise ValueError(
+                "ROUTER_FALLBACK_CONFIDENCE_THRESHOLD must be between 0 and 1."
+            )
+        if self.router_fallback_top_k <= 0:
+            raise ValueError("ROUTER_FALLBACK_TOP_K must be greater than 0.")
+        if not 0 <= self.router_fallback_min_similarity <= 1:
+            raise ValueError(
+                "ROUTER_FALLBACK_MIN_SIMILARITY must be between 0 and 1."
+            )
+        if self.router_fallback_min_consensus <= 0:
+            raise ValueError(
+                "ROUTER_FALLBACK_MIN_CONSENSUS must be greater than 0."
             )
         if not self.qdrant_url:
             raise ValueError("QDRANT_URL must not be empty.")

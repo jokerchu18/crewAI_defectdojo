@@ -21,9 +21,7 @@ from defectdojo_crewai.models.schemas import (
     WorkflowStep,
 )
 from defectdojo_crewai.services.message_store import append_message
-from defectdojo_crewai.services.knowledge_prompt import (
-    prepare_task_with_knowledge,
-)
+from defectdojo_crewai.knowledge.events import enqueue_router_outcome
 from defectdojo_crewai.services.output_parser import parse_model_output
 from defectdojo_crewai.services.risk_acceptance_actions import (
     build_risk_acceptance_tool_calls,
@@ -34,6 +32,7 @@ from defectdojo_crewai.services.progress_service import (
     set_progress_steps,
     update_progress_step,
 )
+from defectdojo_crewai.knowledge.router_fallback import annotate_router_fallback
 from defectdojo_crewai.services.session_service import (
     get_session_context,
     save_session_context,
@@ -60,10 +59,9 @@ class _WorkflowStepList(RootModel[list[WorkflowStep]]):
 
 
 def parse_workflow_plan(user_message: str) -> WorkflowPlan:
-    prepared_task = prepare_task_with_knowledge(router_task, user_message)
     crew = Crew(
         agents=[router_agent],
-        tasks=[prepared_task],
+        tasks=[router_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )
@@ -79,7 +77,8 @@ def parse_workflow_plan(user_message: str) -> WorkflowPlan:
         recovered = _try_recover_workflow_plan(result)
         if recovered is not None:
             plan = recovered
-    return _validate_workflow_plan(plan)
+    validated_plan = _validate_workflow_plan(plan)
+    return annotate_router_fallback(validated_plan, user_message)
 
 
 def _recover_workflow_plan(result: Any) -> WorkflowPlan:
@@ -126,15 +125,14 @@ def parse_user_intent(user_message: str) -> UserIntent:
 
 def _validate_workflow_plan(plan: WorkflowPlan) -> WorkflowPlan:
     if not plan.steps:
-        return WorkflowPlan(
-            steps=[
+        return plan.model_copy(
+            update={"steps": [
                 WorkflowStep(
                     step_id="step_1",
                     intent="unknown",
                     instruction=plan.message or "未识别到可执行操作。",
                 )
-            ],
-            message=plan.message,
+            ]},
         )
 
     seen: set[str] = set()
@@ -263,6 +261,12 @@ def _handle_chat_request(request: ChatRequest) -> ChatResponse:
     save_session_context(request.session_id, context)
     final_message = _workflow_message(workflow_status, plan.message, step_results)
     finish_progress(request.session_id, workflow_status, final_message)
+    enqueue_router_outcome(
+        workflow_id=request.session_id,
+        user_input=request.message,
+        plan=plan.model_dump(),
+        outcome=workflow_status,
+    )
     
     return ChatResponse(
         session_id=request.session_id,
@@ -482,14 +486,12 @@ def _run_crew(
     agent,
     task,
     inputs: dict[str, Any],
-    knowledge_query: str,
     output_model=None,
     workflow_id: str | None = None,
 ) -> dict[str, Any]:
-    prepared_task = prepare_task_with_knowledge(task, knowledge_query)
     crew = Crew(
         agents=[agent],
-        tasks=[prepared_task],
+        tasks=[task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )
@@ -524,10 +526,6 @@ def _run_triage(
         triage_agent,
         triage_task,
         {"test_id": intent.test_id},
-        knowledge_query=(
-            intent.message
-            or f"DefectDojo test {intent.test_id} 漏洞分诊、有效性与利用性评估"
-        ),
         workflow_id=workflow_id,
     )
 
@@ -545,10 +543,6 @@ def _run_deduplication(
         deduplication_agent,
         deduplicate_request_task,
         {"test_id": intent.test_id},
-        knowledge_query=(
-            intent.message
-            or f"DefectDojo test {intent.test_id} 漏洞去重规则"
-        ),
         workflow_id=workflow_id,
     )
 
@@ -566,10 +560,6 @@ def _run_remediation(
         remediation_agent,
         remediation_request_task,
         {"product_id": intent.product_id},
-        knowledge_query=(
-            intent.message
-            or f"DefectDojo product {intent.product_id} 修复计划、优先级与 SLA"
-        ),
         workflow_id=workflow_id,
     )
 
@@ -588,10 +578,6 @@ def _run_import_scan(
         scan_import_agent,
         import_scan_task,
         inputs,
-        knowledge_query=(
-            intent.message
-            or f"{inputs['scan_type']} 扫描报告导入 DefectDojo"
-        ),
         output_model=ImportScanResult,
         workflow_id=workflow_id,
     )
@@ -628,20 +614,9 @@ def _request_risk_acceptance(
             "message": "请在请求中提供 Product ID，例如：评估 Product 1 的风险接受。",
         }
 
-    knowledge_query = (
-        intent.message
-        or (
-            f"DefectDojo product {intent.product_id} 风险接受评估，"
-            f"严重级别 {intent.severity or 'Medium, Low, Info'}"
-        )
-    )
-    prepared_task = prepare_task_with_knowledge(
-        risk_acceptance_request_task,
-        knowledge_query,
-    )
     crew = Crew(
         agents=[risk_acceptance_review_agent],
-        tasks=[prepared_task],
+        tasks=[risk_acceptance_request_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
     )

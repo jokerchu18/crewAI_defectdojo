@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from defectdojo_crewai.config.settings import settings
+from defectdojo_crewai.config.settings import hybrid_search_source_types, settings
 from defectdojo_crewai.knowledge.storage import (
     SOURCE_TYPES,
     KnowledgeStore,
@@ -104,6 +104,8 @@ def _get_store() -> KnowledgeStore:
     fingerprint = _knowledge_fingerprint(settings.knowledge_base_dir)
     with _STORE_LOCK:
         if _STORE is None:
+            sparse_embedder = _build_sparse_embedder() if settings.hybrid_search_enabled else None
+            source_types = hybrid_search_source_types()
             _STORE = build_knowledge_store(
                 embedding_provider=settings.embedding_provider,
                 embedding_model=settings.embedding_model,
@@ -116,11 +118,27 @@ def _get_store() -> KnowledgeStore:
                 qdrant_collection_name=settings.qdrant_collection_name,
                 qdrant_timeout_seconds=settings.qdrant_timeout_seconds,
                 qdrant_prefer_grpc=settings.qdrant_prefer_grpc,
+                sparse_embedder=sparse_embedder,
+                hybrid_source_types=source_types,
             )
         if fingerprint != _LIBRARY_FINGERPRINT:
             _STORE.sync_markdown_library(settings.knowledge_base_dir)
             _LIBRARY_FINGERPRINT = fingerprint
     return _STORE
+
+
+def _build_sparse_embedder():
+    """Create a SparseEmbedder using the configured TEI endpoint."""
+    base_url = settings.openai_base_url
+    if not base_url:
+        base_url = "http://localhost:8081/v1"
+    from defectdojo_crewai.knowledge.sparse_embedder import SparseEmbedder
+
+    return SparseEmbedder(
+        tei_base_url=base_url,
+        api_key=settings.openai_api_key,
+        timeout_seconds=float(settings.qdrant_timeout_seconds),
+    )
 
 
 def _knowledge_fingerprint(doc_dir: Path) -> str:

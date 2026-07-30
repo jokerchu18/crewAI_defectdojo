@@ -7,6 +7,7 @@ from defectdojo_crewai.services.approval_service import (
     pending_approvals,
 )
 from defectdojo_crewai.services.approval_store import init_approval_store
+from defectdojo_crewai.services.workflow_store import init_workflow_store
 from defectdojo_crewai.services.message_store import init_message_store
 from defectdojo_crewai.services.routing_service import handle_chat_request
 from defectdojo_crewai.services.session_service import (
@@ -18,6 +19,7 @@ from defectdojo_crewai.services.session_service import (
 
 def run_chat() -> None:
     init_approval_store()
+    init_workflow_store()
     init_session_store()
     init_message_store()
     session_id = str(uuid4())

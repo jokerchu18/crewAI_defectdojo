@@ -49,6 +49,7 @@ def init_approval_store() -> None:
             CREATE TABLE IF NOT EXISTS approvals (
                 approval_id TEXT PRIMARY KEY,
                 workflow_id TEXT,
+                step_id TEXT,
                 action_type TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
@@ -65,6 +66,18 @@ def init_approval_store() -> None:
             )
             """
         )
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(approvals)").fetchall()
+        }
+        if "step_id" not in columns:
+            connection.execute("ALTER TABLE approvals ADD COLUMN step_id TEXT")
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_approvals_workflow_step
+            ON approvals (workflow_id, step_id, status)
+            """
+        )
 
 
 def create_approval(action: PendingApproval) -> dict[str, Any]:
@@ -75,14 +88,15 @@ def create_approval(action: PendingApproval) -> dict[str, Any]:
         connection.execute(
             """
             INSERT INTO approvals (
-                approval_id, workflow_id, action_type, title, description,
+                approval_id, workflow_id, step_id, action_type, title, description,
                 payload, risk_level, requested_by, status, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 approval_id,
                 action.workflow_id,
+                action.step_id,
                 action.action_type,
                 action.title,
                 action.description,
@@ -115,6 +129,41 @@ def list_pending_approvals() -> list[dict[str, Any]]:
         ).fetchall()
 
     return [_deserialize(row) for row in rows]
+
+
+def list_step_approvals(
+    workflow_id: str,
+    step_id: str,
+) -> list[dict[str, Any]]:
+    with _connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM approvals
+            WHERE workflow_id = ? AND step_id = ?
+            ORDER BY created_at
+            """,
+            (workflow_id, step_id),
+        ).fetchall()
+    return [_deserialize(row) for row in rows]
+
+
+def cancel_pending_step_approvals(
+    workflow_id: str,
+    step_id: str,
+    *,
+    except_approval_id: str,
+) -> None:
+    now = datetime.now().isoformat()
+    with _connection() as connection:
+        connection.execute(
+            """
+            UPDATE approvals
+            SET status = 'cancelled', updated_at = ?
+            WHERE workflow_id = ? AND step_id = ?
+              AND approval_id != ? AND status = 'pending'
+            """,
+            (now, workflow_id, step_id, except_approval_id),
+        )
 
 
 def update_approval(

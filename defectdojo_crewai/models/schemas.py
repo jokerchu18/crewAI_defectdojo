@@ -156,6 +156,7 @@ class PendingApproval(BaseModel):
     payload: dict[str, Any]
     risk_level: Literal["low", "medium", "high", "critical"] = "high"
     workflow_id: str | None = None
+    step_id: str | None = None
     requested_by: str = "router_agent"
 
 

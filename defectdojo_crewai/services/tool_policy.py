@@ -20,6 +20,10 @@ _CURRENT_WORKFLOW_ID: ContextVar[str | None] = ContextVar(
     "current_write_workflow_id",
     default=None,
 )
+_CURRENT_STEP_ID: ContextVar[str | None] = ContextVar(
+    "current_write_step_id",
+    default=None,
+)
 
 
 class ApprovalGatedTool(BaseTool):
@@ -47,6 +51,7 @@ class ApprovalGatedTool(BaseTool):
             ),
             risk_level=self.risk_level,
             workflow_id=_CURRENT_WORKFLOW_ID.get(),
+            step_id=_CURRENT_STEP_ID.get(),
             requested_by=self.requested_by,
         )
         captured = _CAPTURED_APPROVALS.get()
@@ -96,6 +101,7 @@ def request_write_tool_approval(
     description: str,
     risk_level: RiskLevel = "high",
     workflow_id: str | None = None,
+    step_id: str | None = None,
     requested_by: str,
     extra_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -120,6 +126,7 @@ def request_write_tool_approval(
             payload=payload,
             risk_level=risk_level,
             workflow_id=workflow_id,
+            step_id=step_id,
             requested_by=requested_by,
         )
     )
@@ -155,13 +162,16 @@ def execute_write_tool_calls(payload: dict[str, Any]) -> dict[str, Any]:
 def capture_write_approvals(
     *,
     workflow_id: str | None = None,
+    step_id: str | None = None,
 ) -> Iterator[list[dict[str, Any]]]:
     approvals: list[dict[str, Any]] = []
     approvals_token = _CAPTURED_APPROVALS.set(approvals)
     workflow_token = _CURRENT_WORKFLOW_ID.set(workflow_id)
+    step_token = _CURRENT_STEP_ID.set(step_id)
     try:
         yield approvals
     finally:
+        _CURRENT_STEP_ID.reset(step_token)
         _CURRENT_WORKFLOW_ID.reset(workflow_token)
         _CAPTURED_APPROVALS.reset(approvals_token)
 

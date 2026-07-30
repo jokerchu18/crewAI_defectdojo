@@ -16,6 +16,7 @@ _MAX_ENTRIES = 500
 
 def begin_progress(session_id: str, message: str = "正在解析请求并规划工作流...") -> None:
     now = time()
+    # 防止多线程并发问题，维护一个进程级变量
     with _LOCK:
         _PROGRESS[session_id] = {
             "phase": "planning",

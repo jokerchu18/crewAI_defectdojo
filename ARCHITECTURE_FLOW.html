@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DefectDojo + CrewAI 漏洞管理平台 — 架构流程图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e1e4eb;
+    --muted: #8b8fa6;
+    --accent: #6c8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    padding: 40px 24px 80px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  header {
+    text-align: center;
+    margin-bottom: 56px;
+  }
+  header h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  header p {
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .section {
+    margin-bottom: 64px;
+  }
+  .section h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 6px;
+    padding-left: 14px;
+    border-left: 3px solid var(--accent);
+  }
+  .section .subtitle {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+    padding-left: 17px;
+  }
+
+  .mermaid-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 20px;
+    overflow-x: auto;
+    text-align: center;
+  }
+
+  /* Mermaid dark overrides — injected as CSS vars */
+  .mermaid-wrap .mermaid {
+    display: flex;
+    justify-content: center;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: center;
+    margin-top: 20px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend .dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<header>
+  <h1>DefectDojo + CrewAI 智能漏洞管理平台</h1>
+  <p>Router → WorkflowPlan → Multi-Agent 协作 → 人工审批闭环</p>
+</header>
+
+<!-- ============================================================ -->
+<!-- 1. OVERALL ARCHITECTURE                                       -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>1. 系统总体架构</h2>
+  <p class="subtitle">用户自然语言 → Router 规划 → 业务 Agent 执行 → DefectDojo / 审批层</p>
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart TB
+    U(("👤 用户<br/><small>自然语言指令</small>")):::user
+
+    subgraph WEB["🌐 Web 工作台 (Starlette)"]
+        UI["对话界面 + 审批面板 + 文件上传"]
+        API["REST API<br/>/api/chat · /api/approvals · /api/uploads"]
+    end
+
+    subgraph CORE["🧠 核心调度层 (routing_service)"]
+        ROUTER["<b>Router Agent</b><br/>LLM 解析意图 → WorkflowPlan<br/>confidence · steps · depends_on"]
+        CONF["可信度检查<br/>≥ 阈值? ✅<br/>&lt; 阈值? → RAG 降级"]
+    end
+
+    subgraph AGENTS["🤖 业务 Agent 层 (CrewAI)"]
+        direction LR
+        A1["📥 Scan Import<br/>报告导入"]
+        A2["🔍 Triage<br/>漏洞分诊"]
+        A3["🔄 Dedup<br/>去重"]
+        A4["🛠️ Remediation<br/>修复计划"]
+        A5["⚠️ Risk Accept<br/>风险接受"]
+    end
+
+    subgraph STORE["💾 存储层"]
+        direction LR
+        PG[("PostgreSQL<br/>对话历史")]
+        REDIS[("Redis<br/>会话上下文")]
+        SQLITE[("SQLite<br/>工作流状态")]
+        QDRANT[("Qdrant<br/>RAG 知识库")]
+    end
+
+    subgraph EXT["🌍 外部系统"]
+        DD["DefectDojo API<br/>读/写漏洞数据"]
+    end
+
+    subgraph APPROVAL["✋ 人工审批层"]
+        GATE["写工具门控<br/>gated_write_tool"]
+        AR["审批记录 + 乐观锁"]
+        EXEC["服务端 Executor<br/>执行真实写操作"]
+    end
+
+    U -->|"POST /api/chat"| WEB
+    WEB -->|"ChatRequest"| ROUTER
+    ROUTER -->|"WorkflowPlan"| CONF
+    CONF -->|"✅ 高置信度"| AGENTS
+    CONF -.->|"⚠️ 低置信度"| QDRANT
+
+    AGENTS -->|"读工具"| DD
+    AGENTS -->|"写工具 → 门控拦截"| GATE
+    GATE --> AR
+    AR -->|"用户批准"| EXEC
+    EXEC -->|"执行写入"| DD
+    AR -->|"用户拒绝"| REJ["❌ 工作流终止"]
+
+    AGENTS -->|"读写"| STORE
+    WEB -->|"进度轮询"| STORE
+
+    classDef user fill:#3b3f6b,stroke:#6c8cff,color:#fff,stroke-width:2px
+    classDef router fill:#2d3a5c,stroke:#6c8cff,color:#fff
+    classDef store fill:#2a2d3a,stroke:#4a4d5a,color:#ccc
+    classDef approval fill:#3d2e1f,stroke:#e09f3e,color:#f0c060
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2. ROUTER CONFIDENCE & RAG FALLBACK                           -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>2. Router 可信度机制 &amp; RAG 降级策略</h2>
+  <p class="subtitle">confidence 驱动三级降级：LLM 自信 → 历史经验匹配 → 人工兜底</p>
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart TD
+    INPUT(("📝 用户输入")) --> R[Router Agent 生成 WorkflowPlan]
+    R --> C{"confidence ≥ 阈值?<br/><small>router_fallback_confidence_threshold</small>"}
+
+    C -->|"✅ 是 — 高置信度"| DIRECT["直接执行工作流<br/>fallback_used: none<br/>needs_human_review: false"]
+    DIRECT --> EXEC["进入 Agent 执行循环"]
+
+    C -->|"⚠️ 否 — 低置信度"| RAG["检索 Qdrant audit 分区<br/><small>BGE-M3 语义相似度匹配</small>"]
+    RAG --> RAG_OK{"检索结果?"}
+
+    RAG_OK -->|"matched"| EVIDENCE["<b>证据评估</b><br/>assess_decision_history()<br/>检查 min_similarity + min_consensus"]
+    EVIDENCE --> TRUST{"历史模式可信?"}
+
+    TRUST -->|"✅ 可信"| INJECT["注入历史上下文<br/>fallback_used: decision_history<br/>context_injections: [...references]"]
+    INJECT --> EXEC
+
+    TRUST -->|"❌ 不可信"| REVIEW1["标记人工复核<br/>needs_human_review: true<br/>fallback_reason: 共识不足"]
+    REVIEW1 --> HUMAN["👤 前端展示 → 用户确认/修正"]
+
+    RAG_OK -->|"no_match"| REVIEW2["标记人工复核<br/>fallback_used: no_match<br/>needs_human_review: true"]
+    REVIEW2 --> HUMAN
+
+    RAG_OK -->|"unavailable"| REVIEW3["Qdrant 不可用<br/>fallback_used: qdrant_unavailable<br/>needs_human_review: true"]
+    REVIEW3 --> HUMAN
+
+    HUMAN --> EXEC
+
+    style DIRECT fill:#1a3a1a,stroke:#3a8,color:#cfc
+    style INJECT fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style REVIEW1 fill:#3a2a1a,stroke:#e09f3e,color:#fd9
+    style REVIEW2 fill:#3a2a1a,stroke:#e09f3e,color:#fd9
+    style REVIEW3 fill:#3a1a1a,stroke:#e55,color:#faa
+    style HUMAN fill:#3b3f6b,stroke:#6c8cff,color:#fff
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 3. AGENT EXECUTION LOOP                                       -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>3. 业务 Agent 执行循环 &amp; State 传递</h2>
+  <p class="subtitle">每个 Agent 遵循统一的思考-行动-观察循环，Agent 间通过 State 隐式协作</p>
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart TD
+    subgraph STATE["📦 State 容器（Agent 间通信的唯一媒介）"]
+        direction LR
+        CTX["ConversationContext<br/><small>test_id · product_id · engagement_id · finding_ids</small>"]
+        HIST["ConversationHistory<br/><small>摘要 + 滑动窗口原始对话</small>"]
+        WF["WorkflowContext<br/><small>每步的 summary · facts · tool_results</small>"]
+    end
+
+    subgraph LOOP["🔄 Agent 执行循环（单步）"]
+        BUILD["<b>1. 构建 AgentContext</b><br/>将 STATE 三个容器注入 task description<br/><small>[MEMORY_CONTEXT] 标记块 · 字符预算截断</small>"]
+        THINK["<b>2. LLM 思考判断</b><br/>基于上下文决定: 调用哪个工具? 传什么参数?"]
+        CALL["<b>3. 调用工具</b>"]
+        COMPRESS["<b>4. 工具结果压缩</b><br/>提取关键字段 · 控制 Token 消耗"]
+        CHECK{"<b>5. 是 Write Tool?</b>"}
+        DONE["✅ 任务完成<br/>产出 → 更新 STATE"]
+    end
+
+    subgraph NEXT["➡️ 下一步骤"]
+        UPDATE["_updated_context()<br/>从 output/findings 提取 ID<br/>合并到 ConversationContext"]
+        PASS["下一步 Agent 读取<br/>更新后的 STATE"]
+    end
+
+    STATE --> BUILD
+    BUILD --> THINK
+    THINK --> CALL
+    CALL -->|"读工具 → 直接执行"| COMPRESS
+    CALL -->|"写工具 → gated_write_tool"| APPROVAL["✋ 进入审批层"]
+    COMPRESS --> CHECK
+    CHECK -->|"否"| THINK
+    CHECK -->|"是"| APPROVAL
+    APPROVAL -->|"审批通过后恢复"| DONE
+    CHECK -.->|"LLM 判断完成"| DONE
+    DONE --> UPDATE --> PASS --> STATE
+
+    style BUILD fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style THINK fill:#1a2a40,stroke:#7c9cff,color:#dde
+    style CALL fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style COMPRESS fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style CHECK fill:#3a2a1a,stroke:#e09f3e,color:#fd9
+    style DONE fill:#1a3a1a,stroke:#3a8,color:#cfc
+    style APPROVAL fill:#3a1a1a,stroke:#e55,color:#faa
+    style UPDATE fill:#2a2a3a,stroke:#8b8fa6,color:#ddd
+    style PASS fill:#2a2a3a,stroke:#8b8fa6,color:#ddd
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 4. APPROVAL & WORKFLOW RESUME                                 -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>4. 人工审批 &amp; 工作流恢复机制</h2>
+  <p class="subtitle">写工具门控 → 审批暂停 → 乐观锁恢复 → 服务端执行</p>
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart TD
+    AGENT["Agent 调用写工具"] --> GATE["<b>gated_write_tool 拦截</b><br/>不执行真实操作<br/>保存 tool_name + arguments"]
+    GATE --> CAPTURE["capture_write_approvals()<br/>上下文管理器收集审批"]
+    CAPTURE --> JUDGE{"有写操作待审批?"}
+
+    JUDGE -->|"否"| COMPLETE["✅ 步骤完成"]
+    JUDGE -->|"是"| APPROVAL["<b>创建审批记录</b><br/>request_write_tool_approval()<br/>存入 approval_store"]
+
+    APPROVAL --> PERSIST["<b>持久化工作流状态 (SQLite)</b><br/>WorkflowRun {<br/>  status: waiting_approval<br/>  current_step_index<br/>  completed_step_ids<br/>  context 快照<br/>  version (乐观锁)<br/>}"]
+
+    PERSIST --> FRONTEND["<b>前端审批面板</b><br/>展示: 操作类型 · 风险等级 · 影响范围"]
+    FRONTEND --> DECISION{"用户决策?"}
+
+    DECISION -->|"❌ 拒绝"| REJECT["reject_workflow()<br/>status → rejected<br/>中止后续步骤"]
+    REJECT --> END1["⏹️ 工作流终止"]
+
+    DECISION -->|"✅ 批准"| CLAIM["<b>claim_workflow_resume() 乐观锁</b><br/>UPDATE WHERE status='waiting_approval'<br/>AND version = N"]
+    CLAIM --> CLAIM_OK{"认领成功?"}
+
+    CLAIM_OK -->|"否 (已被抢占)"| CONFLICT["返回 null<br/>防止重复执行"]
+    CLAIM_OK -->|"是"| EXEC["<b>服务端 Executor 执行</b><br/>execute_write_tool_calls()<br/>从注册表取真实工具 → tool.run()"]
+
+    EXEC --> EXEC_OK{"执行结果?"}
+    EXEC_OK -->|"成功"| INDEX["异步索引到 RAG<br/>triage / remediation 分区"]
+    EXEC_OK -->|"失败"| FAIL["fail_workflow()<br/>status → failed"]
+    FAIL --> END2["⏹️ 工作流失败"]
+
+    INDEX --> RESUME["<b>resume_workflow()</b><br/>注入审批结果到步骤<br/>completed_step_ids + 1"]
+    RESUME --> CONTINUE["<b>_continue_workflow()</b><br/>从断点继续执行后续步骤"]
+    CONTINUE --> COMPLETE
+
+    style AGENT fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style GATE fill:#3a1a1a,stroke:#e55,color:#faa
+    style PERSIST fill:#2a2a3a,stroke:#8b8fa6,color:#ddd
+    style CLAIM fill:#1a2a40,stroke:#7c9cff,color:#dde
+    style EXEC fill:#3a2a1a,stroke:#e09f3e,color:#fd9
+    style INDEX fill:#1a3a1a,stroke:#3a8,color:#cfc
+    style RESUME fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style REJECT fill:#3a1a1a,stroke:#e55,color:#faa
+    style FAIL fill:#3a1a1a,stroke:#e55,color:#faa
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 5. RAG KNOWLEDGE LIFECYCLE                                    -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>5. RAG 知识经验库生命周期</h2>
+  <p class="subtitle">Qdrant 四分区 + BGE-M3 Embedding · 工作流闭环 · 持续学习</p>
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart LR
+    subgraph WRITE["📥 写入时机"]
+        W1["工作流完成<br/><small>enqueue_router_outcome()</small>"]
+        W2["审批执行成功<br/><small>enqueue_approved_execution()</small>"]
+        W3["知识库文档同步<br/><small>Markdown chunk 增量更新</small>"]
+    end
+
+    subgraph QDRANT["🗄️ Qdrant 向量数据库 (BGE-M3 · 1024维)"]
+        direction TB
+        L["<b>library</b><br/>CWE · CVE · OWASP<br/>安全标准知识"]
+        A["<b>audit</b><br/>Router 历史决策<br/>请求 · 计划 · 结果"]
+        T["<b>triage</b><br/>已批准的分诊/误报<br/>风险接受结果"]
+        R["<b>remediation</b><br/>is_mitigated=true<br/>的修复结果"]
+    end
+
+    subgraph READ["📖 消费方"]
+        R1["Router Agent<br/><small>检索历史决策辅助规划</small>"]
+        R2["Triage Agent<br/><small>参考历史分诊模式</small>"]
+        R3["Remediation Agent<br/><small>参考历史修复策略</small>"]
+        R4["Scan Import Agent<br/><small>参考漏洞知识库</small>"]
+    end
+
+    W1 -->|"source_type: audit<br/>异步线程池写入"| A
+    W2 -->|"按 tool_name 分流<br/>triage / remediation"| T
+    W2 -->|"按 tool_name 分流<br/>triage / remediation"| R
+    W3 -->|"稳定 chunk ID + 哈希<br/>只更新变化的部分"| L
+
+    A -->|"search_knowledge_safely()"| R1
+    T -->|"KnowledgeSearchTriageTool"| R2
+    R -->|"KnowledgeSearchRemediationTool"| R3
+    L -->|"KnowledgeSearchLibraryTool"| R4
+
+    R1 -.->|"提升规划准确率<br/>正反馈闭环"| W1
+
+    style W1 fill:#1a3a1a,stroke:#3a8,color:#cfc
+    style W2 fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style W3 fill:#2a2a3a,stroke:#8b8fa6,color:#ddd
+    style L fill:#1a2a3a,stroke:#6c8cff,color:#cde
+    style A fill:#3a2a1a,stroke:#e09f3e,color:#fd9
+    style T fill:#2a3a2a,stroke:#5a8,color:#afa
+    style R fill:#2a3a2a,stroke:#5a8,color:#afa
+    style R1 fill:#3b3f6b,stroke:#6c8cff,color:#fff
+    style R2 fill:#3b3f6b,stroke:#6c8cff,color:#fff
+    style R3 fill:#3b3f6b,stroke:#6c8cff,color:#fff
+    style R4 fill:#3b3f6b,stroke:#6c8cff,color:#fff
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 6. SEQUENCE DIAGRAM — END TO END                              -->
+<!-- ============================================================ -->
+<div class="section">
+  <h2>6. 端到端时序流程（完整示例）</h2>
+  <p class="subtitle">用户说"导入报告并分诊" → 规划 → 执行 → 审批 → 完成</p>
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+sequenceDiagram
+    actor User as 👤 用户
+    participant Web as 🌐 Web API
+    participant Router as 🧠 Router Agent
+    participant Qdrant as 🗄️ Qdrant
+    participant Import as 📥 Scan Import Agent
+    participant Triage as 🔍 Triage Agent
+    participant Approval as ✋ 审批层
+    participant DD as DefectDojo
+    participant PG as 💾 PostgreSQL/Redis/SQLite
+
+    User->>Web: POST /api/chat "导入这份 SARIF 报告并分诊"
+    Web->>PG: 保存用户消息 + 加载会话上下文
+    PG-->>Web: MemorySnapshot (History + Context)
+
+    Web->>Router: parse_workflow_plan(user_message, context)
+    Router->>Router: LLM 解析意图 → WorkflowPlan
+    Note over Router: {steps: [import_scan, triage],<br/>confidence: 0.92}
+
+    alt confidence < 阈值
+        Router->>Qdrant: search_knowledge(query, source_type=audit)
+        Qdrant-->>Router: 历史相似决策 / no_match
+        Router->>Router: 评估证据 → 注入上下文 或 标记人工复核
+    end
+
+    Router-->>Web: WorkflowPlan + confidence + fallback
+    Web->>PG: create_workflow_run() 持久化
+    Web-->>User: ChatResponse {plan, steps, status: running}
+
+    loop 每个 Step
+        Web->>Web: build_agent_context() → 注入 STATE
+        Web->>Import: 执行 import_scan Agent
+        Import->>DD: 读工具: 验证 engagement 存在
+        DD-->>Import: OK
+        Import->>Import: 写工具 → gated_write_tool 拦截
+        Import-->>Web: status: waiting_approval
+
+        Web->>PG: save_workflow_run(status=waiting_approval)
+        Web-->>User: 进度更新 → 审批面板展示
+
+        User->>Web: POST /api/approvals/{id}/decision (approve)
+        Web->>Approval: claim (乐观锁) → execute
+        Approval->>DD: 执行真实导入
+        DD-->>Approval: ImportScanResult {test_id: 42}
+        Approval-->>Web: 执行成功
+        Web->>Web: resume_workflow() → _continue_workflow()
+
+        Web->>Triage: 执行 triage Agent (context 已含 test_id=42)
+        Triage->>DD: 读工具: get_findings(test_id=42)
+        DD-->>Triage: findings[...]
+        Triage->>Triage: LLM 分析 → 更新分诊
+        Triage->>Triage: 写工具 → gated_write_tool 拦截
+        Triage-->>Web: status: waiting_approval
+
+        User->>Web: 批准
+        Web->>Approval: 执行分诊写入
+        Approval->>DD: update_finding(...)
+        DD-->>Approval: OK
+        Approval-->>Web: 执行成功
+    end
+
+    Web->>PG: 工作流 completed
+    Web->>Qdrant: enqueue_router_outcome() 异步索引
+    Web->>Qdrant: enqueue_approved_execution() 异步索引
+    Web-->>User: ChatResponse {status: completed, steps: [...]}
+    </div>
+  </div>
+</div>
+
+</div><!-- .container -->
+
+<script>
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#1a2a3a',
+    primaryTextColor: '#c8d6e5',
+    primaryBorderColor: '#6c8cff',
+    lineColor: '#4a5568',
+    secondaryColor: '#2d3a5c',
+    tertiaryColor: '#2a2d3a',
+    noteBkgColor: '#1a2a3a',
+    noteTextColor: '#c8d6e5',
+    fontSize: '14px',
+    fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif',
+    edgeLabelBackground: '#1a1d27',
+  },
+  flowchart: {
+    htmlLabels: true,
+    curve: 'basis',
+    padding: 24,
+    nodeSpacing: 40,
+    rankSpacing: 48,
+  },
+  sequence: {
+    actorMargin: 60,
+    messageMargin: 36,
+    mirrorActors: false,
+    width: 220,
+    boxMargin: 12,
+  },
+});
+</script>
+
+</body>
+</html>

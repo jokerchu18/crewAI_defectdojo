@@ -34,6 +34,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session
     ON chat_messages (session_id, id);
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    session_id TEXT PRIMARY KEY,
+    summary TEXT NOT NULL,
+    covered_through_message_id BIGINT NOT NULL,
+    source_message_count INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -78,6 +86,7 @@ def append_message(
         raise MessageStoreError(_CONNECT_HINT) from exc
 
     return {
+        "id": int(row[0]),
         "role": role,
         "content": content,
         "created_at": float(row[1]),
@@ -93,7 +102,7 @@ def get_messages(session_id: str) -> list[dict[str, Any]]:
         ) as cursor:
             rows = cursor.execute(
                 """
-                SELECT role, content, result,
+                SELECT id, role, content, result,
                        extract(epoch FROM created_at) AS created_at
                 FROM chat_messages
                 WHERE session_id = %s
@@ -108,6 +117,7 @@ def get_messages(session_id: str) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for row in rows:
         message: dict[str, Any] = {
+            "id": int(row["id"]),
             "role": row["role"],
             "content": row["content"],
             "created_at": float(row["created_at"]),
@@ -118,12 +128,91 @@ def get_messages(session_id: str) -> list[dict[str, Any]]:
     return messages
 
 
+def get_conversation_summary(session_id: str) -> dict[str, Any] | None:
+    normalized = _normalize_session_id(session_id)
+    try:
+        with _get_pool().connection() as conn, conn.cursor(
+            row_factory=dict_row
+        ) as cursor:
+            row = cursor.execute(
+                """
+                SELECT summary, covered_through_message_id,
+                       source_message_count, version,
+                       extract(epoch FROM updated_at) AS updated_at
+                FROM conversation_summaries
+                WHERE session_id = %s
+                  AND updated_at > now() - make_interval(secs => %s)
+                """,
+                (normalized, settings.session_ttl_seconds),
+            ).fetchone()
+    except PostgresDriverError as exc:
+        raise MessageStoreError(_CONNECT_HINT) from exc
+
+    if row is None:
+        return None
+    return {
+        "session_id": normalized,
+        "summary": row["summary"],
+        "covered_through_message_id": int(row["covered_through_message_id"]),
+        "source_message_count": int(row["source_message_count"]),
+        "version": int(row["version"]),
+        "updated_at": float(row["updated_at"]),
+    }
+
+
+def save_conversation_summary(
+    session_id: str,
+    *,
+    summary: str,
+    covered_through_message_id: int,
+    source_message_count: int,
+) -> dict[str, Any]:
+    normalized = _normalize_session_id(session_id)
+    try:
+        with _get_pool().connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO conversation_summaries (
+                    session_id, summary, covered_through_message_id,
+                    source_message_count, version, updated_at
+                )
+                VALUES (%s, %s, %s, %s, 1, now())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    summary = EXCLUDED.summary,
+                    covered_through_message_id =
+                        EXCLUDED.covered_through_message_id,
+                    source_message_count = EXCLUDED.source_message_count,
+                    version = conversation_summaries.version + 1,
+                    updated_at = now()
+                WHERE conversation_summaries.covered_through_message_id
+                      <= EXCLUDED.covered_through_message_id
+                """,
+                (
+                    normalized,
+                    summary,
+                    covered_through_message_id,
+                    source_message_count,
+                ),
+            )
+    except PostgresDriverError as exc:
+        raise MessageStoreError(_CONNECT_HINT) from exc
+
+    saved = get_conversation_summary(normalized)
+    if saved is None:
+        raise MessageStoreError("Conversation summary could not be persisted.")
+    return saved
+
+
 def clear_messages(session_id: str) -> None:
     normalized = _normalize_session_id(session_id)
     try:
         with _get_pool().connection() as conn:
             conn.execute(
                 "DELETE FROM chat_messages WHERE session_id = %s",
+                (normalized,),
+            )
+            conn.execute(
+                "DELETE FROM conversation_summaries WHERE session_id = %s",
                 (normalized,),
             )
     except PostgresDriverError as exc:

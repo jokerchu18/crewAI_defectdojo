@@ -569,6 +569,15 @@ async function decideApproval(decision) {
       "assistant",
       `审批 ${approvalId.slice(0, 8)} 已${action}${executionText}。`,
     );
+    const resumed = approval.workflow_resume;
+    if (resumed?.result) {
+      setContext(resumed.context || {});
+      addMessage(
+        "assistant",
+        resumed.result.message || "审批完成，工作流已继续执行。",
+        resultDetails(resumed.result),
+      );
+    }
     closeApprovalDialog();
     await loadApprovals();
   } catch (error) {

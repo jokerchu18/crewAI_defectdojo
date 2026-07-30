@@ -24,7 +24,6 @@ router_agent = Agent(
         "如果后续步骤需要使用前一步产生的 test_id 或 product_id，可以把对应字段留空，"
         "Python 调度器会从工作流上下文补充。不得编造用户没有提供且无法由前置步骤产生的参数。"
         "风险接受只负责生成预审步骤，实际接受仍必须经过人工审批。"
-        "risk_acceptance 必须是工作流的最后一个步骤，因为它可能暂停等待人工审批。"
     ),
     tools=[KnowledgeSearchDecisionHistoryTool()],
     verbose=True,

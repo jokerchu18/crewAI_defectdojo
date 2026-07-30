@@ -3,10 +3,12 @@ from typing import Any
 from defectdojo_crewai.models.schemas import ApprovalDecision, PendingApproval
 from defectdojo_crewai.services.action_registry import execute_action
 from defectdojo_crewai.services.approval_store import (
+    cancel_pending_step_approvals,
     claim_pending_approval,
     create_approval,
     get_approval,
     list_pending_approvals,
+    list_step_approvals,
     update_approval,
 )
 from defectdojo_crewai.services import action_executors as _action_executors
@@ -37,6 +39,7 @@ def decide_approval(decision: ApprovalDecision) -> dict[str, Any]:
             reviewer=decision.reviewer,
             reviewer_comment=decision.comment,
         )
+        _stop_workflow(approval, "rejected")
         return get_approval(decision.approval_id)
 
     payload = decision.edited_payload or approval["payload"]
@@ -76,9 +79,53 @@ def decide_approval(decision: ApprovalDecision) -> dict[str, Any]:
             status="failed",
             error_message=str(exc),
         )
+        _stop_workflow(approval, "failed")
         raise
 
-    return get_approval(decision.approval_id)
+    completed = get_approval(decision.approval_id)
+    resumed = _resume_workflow_if_ready(completed)
+    if resumed is not None:
+        completed["workflow_resume"] = resumed.model_dump(mode="json")
+    return completed
+
+
+def _stop_workflow(approval: dict[str, Any], status: str) -> None:
+    workflow_id = approval.get("workflow_id")
+    step_id = approval.get("step_id")
+    if not workflow_id or not step_id:
+        return
+
+    cancel_pending_step_approvals(
+        workflow_id,
+        step_id,
+        except_approval_id=approval["approval_id"],
+    )
+    from defectdojo_crewai.services.routing_service import (
+        fail_workflow,
+        reject_workflow,
+    )
+
+    if status == "rejected":
+        reject_workflow(workflow_id)
+    else:
+        fail_workflow(workflow_id)
+
+
+def _resume_workflow_if_ready(approval: dict[str, Any] | None):
+    if approval is None:
+        return None
+    workflow_id = approval.get("workflow_id")
+    step_id = approval.get("step_id")
+    if not workflow_id or not step_id:
+        return None
+
+    approvals = list_step_approvals(workflow_id, step_id)
+    if not approvals or any(item["status"] != "completed" for item in approvals):
+        return None
+
+    from defectdojo_crewai.services.routing_service import resume_workflow
+
+    return resume_workflow(workflow_id)
 
 
 def _filter_approved_findings(

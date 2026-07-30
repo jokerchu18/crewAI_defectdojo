@@ -56,7 +56,7 @@ REDIS_SOCKET_TIMEOUT_SECONDS=5
 对话消息（用户提问与 Agent 最终答复，含各步骤执行结果）持久化在PostgreSQL 中，刷新页面或重启服务后可恢复历史对话。先安装客户端：
 
 ```powershell
-python -m pip install "psycopg[binary,pool]"
+python -m pip install "psycopg[binary,pool]" tiktoken
 ```
 
 本地使用 Docker 启动 PostgreSQL（端口 5433，避免与 DefectDojo 自带的
@@ -79,9 +79,18 @@ CHAT_DATABASE_URL=postgresql://chat:chatpass@localhost:5433/chat_history
 CHAT_DATABASE_POOL_SIZE=5
 CHAT_DATABASE_TIMEOUT_SECONDS=5
 SESSION_HISTORY_MAX_MESSAGES=200
+CONTEXT_HISTORY_TOKEN_BUDGET=3000
+CONTEXT_SUMMARY_TOKEN_BUDGET=400
+CONTEXT_SUMMARY_INPUT_TOKEN_BUDGET=3000
+CONTEXT_SUMMARY_ENABLED=true
 ```
 
-表结构（`chat_messages`）在服务启动时自动创建。每个会话最多保留
+表结构（`chat_messages` 和 `conversation_summaries`）在服务启动时自动创建。
+最近原始对话按 `CONTEXT_HISTORY_TOKEN_BUDGET` 构成滑动窗口；退出窗口的旧消息
+会与已有摘要增量合并，并通过 `covered_through_message_id` 避免重复总结。
+总结由独立 LLM 调用完成，不创建额外 CrewAI Agent。
+
+每个会话最多保留
 `SESSION_HISTORY_MAX_MESSAGES` 条消息，且查询时只返回 `SESSION_TTL_SECONDS`
 内的消息，与 Redis 会话上下文的过期策略保持一致。
 
@@ -189,3 +198,47 @@ API Key。
 切换 Embedding 模型或向量维度时必须重建集合。可以先停止应用，再删除
 `defectdojo_knowledge` 并重新启动应用；启动时会创建 1024 维集合、创建 payload
 索引，并同步 `library` 分区。
+
+### Hybrid Search（稠密 + 稀疏混合检索）
+
+当 `HYBRID_SEARCH_ENABLED=true` 时，系统会为 Qdrant 集合添加一个命名的 sparse
+向量字段，并在写入文档时同步计算 BGE-M3 的稀疏词汇权重向量。对配置在
+`HYBRID_SEARCH_SOURCE_TYPES` 中的分区，检索时使用 **RRF（Reciprocal Rank
+Fusion）** 融合稠密语义匹配和稀疏精确匹配两路结果。
+
+**为什么需要混合检索：**
+
+| 场景 | 纯稠密检索 | 混合检索 |
+| --- | --- | --- |
+| 搜索 "导入 SARIF 并分诊" | ✅ 语义匹配 | ✅ 语义匹配 |
+| 搜索 `CVE-2024-43896` | ⚠️ 可能召回相关但不对的 CVE | ✅ 精确命中 CVE 编号 |
+| 搜索特定组件版本 `log4j 2.24.1` | ⚠️ 可能召回其他 Java 日志库 | ✅ 版本号精确匹配 |
+
+**前置条件：**
+
+- `EMBEDDING_PROVIDER` 必须为 `tei`（BGE-M3 原生支持 sparse 输出）或指向
+  BGE-M3 兼容端点的 `openai`
+- TEI 服务需要运行中（`docker compose -f docker-compose.qdrant.yml up -d`）
+- BGE-M3 在 CPU 模式下也支持 sparse，无需 GPU
+
+**启用方式：**
+
+```dotenv
+HYBRID_SEARCH_ENABLED=true
+HYBRID_SEARCH_SOURCE_TYPES=library
+```
+
+初次启用时，应用会自动调用 Qdrant 的 `update_collection` API 添加 sparse 向量
+配置（不影响已有数据）。后续写入的文档会同时存储 dense 和 sparse 两个向量；
+已有文档的 sparse 向量为空，不会参与混合检索——如需覆盖存量，删除集合后重启
+即可重建全部索引。
+
+**分阶段推广建议：**
+
+1. 先只对 `library` 分区开启（默认），这是 CVE/CWE 编号最密集的分区，提升
+   最明显，改动面最小
+2. 验证效果后，可以追加 `triage` 和 `remediation`：
+   ```dotenv
+   HYBRID_SEARCH_SOURCE_TYPES=library,triage,remediation
+   ```
+3. `audit` 分区以自然语言为主，维持纯稠密检索即可

@@ -9,6 +9,8 @@ import httpx
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from defectdojo_crewai.config.settings import settings
+from defectdojo_crewai.utils.retry import execute_with_resilience
+from defectdojo_crewai.utils.timeout_configs import get_timeout_config
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -16,6 +18,28 @@ R = TypeVar("R")
 _DEFECTDOJO_TOOL_SEMAPHORE = BoundedSemaphore(
     settings.defectdojo_tool_max_concurrency
 )
+
+# Exception types that should trigger a retry (transient HTTP / network failures).
+_RETRYABLE_HTTPX: tuple[type[Exception], ...] = (
+    httpx.TimeoutException,
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+)
+
+
+def _httpx_timeout(name: str) -> httpx.Timeout:
+    """Build an ``httpx.Timeout`` from the named ``TimeoutConfig`` preset."""
+    config = get_timeout_config(name)
+    return httpx.Timeout(
+        connect=config.connect_timeout,
+        read=config.read_timeout,
+        write=config.write_timeout,
+        pool=config.connect_timeout,
+    )
 
 
 def _limit_defectdojo_tool(func: Callable[P, R]) -> Callable[P, R]:
@@ -156,20 +180,31 @@ def defectdojo_import_scan_tool(
         "active": str(active).lower(),
         "verified": str(verified).lower(),
     }
+    timeout = _httpx_timeout("defectdojo_import")
 
-    with file_path.open("rb") as scan_file:
-        files = {
-            "file": (file_path.name, scan_file, "application/octet-stream"),
-        }
-        response = httpx.post(
-            url,
-            headers=headers,
-            data=data,
-            files=files,
-            timeout=120,
-        )
+    def _post() -> httpx.Response:
+        with file_path.open("rb") as scan_file:
+            files = {
+                "file": (file_path.name, scan_file, "application/octet-stream"),
+            }
+            resp = httpx.post(
+                url,
+                headers=headers,
+                data=data,
+                files=files,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp
 
-    payload=response.json()
+    response = execute_with_resilience(
+        "defectdojo_import",
+        get_timeout_config("defectdojo_import"),
+        _post,
+        retryable=_RETRYABLE_HTTPX,
+    )
+
+    payload = response.json()
 
     result = ImportScanResult(
     test_id=payload["test_id"],
@@ -212,14 +247,19 @@ def defectdojo_get_findings_tool(
     headers = {
         "Authorization": f"Token {api_key}",
     }
+    timeout = _httpx_timeout("defectdojo_read")
 
-    response = httpx.get(
-        url,
-        headers=headers,
-        timeout=60,
+    def _get() -> httpx.Response:
+        resp = httpx.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_read",
+        get_timeout_config("defectdojo_read"),
+        _get,
+        retryable=_RETRYABLE_HTTPX,
     )
-    response.raise_for_status()
-
     return response.json()
 
 
@@ -250,19 +290,22 @@ def defectdojo_get_finding_tool(
     test_id: int,
 ) -> dict:
     url = f"{base_url.rstrip('/')}/api/v2/findings/?test={test_id}"
-
     headers = {
         "Authorization": f"Token {api_key}",
     }
+    timeout = _httpx_timeout("defectdojo_read")
 
-    response = httpx.get(
-        url,
-        headers=headers,
-        timeout=60,
+    def _get() -> httpx.Response:
+        resp = httpx.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_read",
+        get_timeout_config("defectdojo_read"),
+        _get,
+        retryable=_RETRYABLE_HTTPX,
     )
-
-    response.raise_for_status()
-
     return response.json()
 
 
@@ -293,19 +336,22 @@ def defectdojo_get_finding_by_product_tool(
     product_id: int,
 ) -> dict:
     url = f"{base_url.rstrip('/')}/api/v2/findings/?product={product_id}"
-
     headers = {
         "Authorization": f"Token {api_key}",
     }
+    timeout = _httpx_timeout("defectdojo_read")
 
-    response = httpx.get(
-        url,
-        headers=headers,
-        timeout=60,
+    def _get() -> httpx.Response:
+        resp = httpx.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_read",
+        get_timeout_config("defectdojo_read"),
+        _get,
+        retryable=_RETRYABLE_HTTPX,
     )
-
-    response.raise_for_status()
-
     return response.json()
 
 
@@ -670,13 +716,19 @@ def defectdojo_update_finding_tool(
     if not updates:
         raise ValueError("No finding fields were provided for update.")
 
-    response = httpx.patch(
-        url,
-        headers=headers,
-        json=updates,
-        timeout=60,
+    timeout = _httpx_timeout("defectdojo_write")
+
+    def _patch() -> httpx.Response:
+        resp = httpx.patch(url, headers=headers, json=updates, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_write",
+        get_timeout_config("defectdojo_write"),
+        _patch,
+        retryable=_RETRYABLE_HTTPX,
     )
-    response.raise_for_status()
     return response.json()
 
 
@@ -833,13 +885,19 @@ def defectdojo_verify_finding_tool(
     if note_type is not None:
         data["note_type"] = note_type
 
-    response = httpx.post(
-        url,
-        headers=headers,
-        data=data,
-        timeout=60,
+    timeout = _httpx_timeout("defectdojo_write")
+
+    def _post() -> httpx.Response:
+        resp = httpx.post(url, headers=headers, data=data, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_write",
+        get_timeout_config("defectdojo_write"),
+        _post,
+        retryable=_RETRYABLE_HTTPX,
     )
-    response.raise_for_status()
     return response.json()
 
 
@@ -1032,13 +1090,19 @@ def defectdojo_create_risk_acceptance_tool(
         "accepted_findings": accepted_findings,
     }
 
-    response = httpx.post(
-        url,
-        headers=headers,
-        json=payload,
-        timeout=60,
+    timeout = _httpx_timeout("defectdojo_write")
+
+    def _post() -> httpx.Response:
+        resp = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_write",
+        get_timeout_config("defectdojo_write"),
+        _post,
+        retryable=_RETRYABLE_HTTPX,
     )
-    response.raise_for_status()
     return response.json()
 
 

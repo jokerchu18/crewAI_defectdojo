@@ -21,6 +21,7 @@ from defectdojo_crewai.services.approval_service import (
     pending_approvals,
 )
 from defectdojo_crewai.services.approval_store import init_approval_store
+from defectdojo_crewai.services.workflow_store import init_workflow_store
 from defectdojo_crewai.services.message_store import (
     MessageStoreError,
     clear_messages,
@@ -49,6 +50,7 @@ SCAN_TYPE_BY_SUFFIX = {
 @asynccontextmanager
 async def lifespan(app: Starlette):
     init_approval_store()
+    init_workflow_store()
     settings.web_upload_dir.mkdir(parents=True, exist_ok=True)
     try:
         await run_in_threadpool(init_session_store)

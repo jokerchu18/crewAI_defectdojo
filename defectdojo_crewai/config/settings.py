@@ -42,6 +42,51 @@ class Settings:
             os.getenv("DEFECTDOJO_TOOL_MAX_CONCURRENCY", "8")
         )
 
+        # ── Tool timeout & resilience ───────────────────────────────
+        self.defectdojo_tool_connect_timeout = float(
+            os.getenv("DEFECTDOJO_TOOL_CONNECT_TIMEOUT", "10")
+        )
+        self.defectdojo_tool_read_timeout = float(
+            os.getenv("DEFECTDOJO_TOOL_READ_TIMEOUT", "60")
+        )
+        self.defectdojo_tool_write_timeout = float(
+            os.getenv("DEFECTDOJO_TOOL_WRITE_TIMEOUT", "60")
+        )
+        self.defectdojo_tool_import_timeout = float(
+            os.getenv("DEFECTDOJO_TOOL_IMPORT_TIMEOUT", "300")
+        )
+        self.defectdojo_tool_max_retries = int(
+            os.getenv("DEFECTDOJO_TOOL_MAX_RETRIES", "2")
+        )
+        self.defectdojo_tool_retry_backoff_base = float(
+            os.getenv("DEFECTDOJO_TOOL_RETRY_BACKOFF_BASE", "1.0")
+        )
+        self.defectdojo_tool_retry_backoff_max = float(
+            os.getenv("DEFECTDOJO_TOOL_RETRY_BACKOFF_MAX", "30.0")
+        )
+        self.defectdojo_tool_circuit_breaker_enabled = get_bool_env(
+            "DEFECTDOJO_TOOL_CIRCUIT_BREAKER_ENABLED", True
+        )
+        self.defectdojo_tool_circuit_breaker_threshold = int(
+            os.getenv("DEFECTDOJO_TOOL_CIRCUIT_BREAKER_THRESHOLD", "3")
+        )
+        self.defectdojo_tool_circuit_breaker_recovery = float(
+            os.getenv("DEFECTDOJO_TOOL_CIRCUIT_BREAKER_RECOVERY", "60.0")
+        )
+
+        self.agent_router_timeout = float(
+            os.getenv("AGENT_ROUTER_TIMEOUT", "60")
+        )
+        self.agent_default_timeout = float(
+            os.getenv("AGENT_DEFAULT_TIMEOUT", "300")
+        )
+        self.agent_import_timeout = float(
+            os.getenv("AGENT_IMPORT_TIMEOUT", "600")
+        )
+        self.agent_risk_acceptance_timeout = float(
+            os.getenv("AGENT_RISK_ACCEPTANCE_TIMEOUT", "300")
+        )
+
         self.default_scan_type = os.getenv("DEFAULT_SCAN_TYPE", "SARIF")
         self.default_scan_file_path = os.getenv(
             "DEFAULT_SCAN_FILE_PATH",
@@ -130,12 +175,23 @@ class Settings:
         self.qdrant_timeout_seconds = int(
             os.getenv("QDRANT_TIMEOUT_SECONDS", "30")
         )
+        self.qdrant_tool_connect_timeout = float(
+            os.getenv("QDRANT_TOOL_CONNECT_TIMEOUT", "5")
+        )
         self.qdrant_prefer_grpc = get_bool_env(
             "QDRANT_PREFER_GRPC",
             False,
         )
         self.knowledge_min_similarity = float(
             os.getenv("KNOWLEDGE_MIN_SIMILARITY", "0.35")
+        )
+        self.hybrid_search_enabled = get_bool_env(
+            "HYBRID_SEARCH_ENABLED",
+            False,
+        )
+        self.hybrid_search_source_types_raw = os.getenv(
+            "HYBRID_SEARCH_SOURCE_TYPES",
+            "library",
         )
         self.router_fallback_confidence_threshold = float(
             os.getenv("ROUTER_FALLBACK_CONFIDENCE_THRESHOLD", "0.7")
@@ -167,6 +223,28 @@ class Settings:
         self.session_history_max_messages = int(
             os.getenv("SESSION_HISTORY_MAX_MESSAGES", "200")
         )
+        self.context_history_token_budget = int(
+            os.getenv("CONTEXT_HISTORY_TOKEN_BUDGET", "3000")
+        )
+        self.context_summary_token_budget = int(
+            os.getenv("CONTEXT_SUMMARY_TOKEN_BUDGET", "400")
+        )
+        self.context_summary_input_token_budget = int(
+            os.getenv("CONTEXT_SUMMARY_INPUT_TOKEN_BUDGET", "3000")
+        )
+        self.context_summary_enabled = get_bool_env(
+            "CONTEXT_SUMMARY_ENABLED",
+            True,
+        )
+        self.context_max_chars = int(
+            os.getenv("CONTEXT_MAX_CHARS", "12000")
+        )
+        self.context_workflow_max_steps = int(
+            os.getenv("CONTEXT_WORKFLOW_MAX_STEPS", "8")
+        )
+        self.context_agent_output_max_chars = int(
+            os.getenv("CONTEXT_AGENT_OUTPUT_MAX_CHARS", "4000")
+        )
 
         self.chat_database_url = os.getenv(
             "CHAT_DATABASE_URL",
@@ -197,9 +275,77 @@ class Settings:
             raise ValueError(
                 "DEFECTDOJO_TOOL_MAX_CONCURRENCY must be greater than 0."
             )
+        if self.defectdojo_tool_connect_timeout <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_CONNECT_TIMEOUT must be greater than 0."
+            )
+        if self.defectdojo_tool_read_timeout <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_READ_TIMEOUT must be greater than 0."
+            )
+        if self.defectdojo_tool_write_timeout <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_WRITE_TIMEOUT must be greater than 0."
+            )
+        if self.defectdojo_tool_import_timeout <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_IMPORT_TIMEOUT must be greater than 0."
+            )
+        if self.defectdojo_tool_max_retries < 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_MAX_RETRIES must be >= 0."
+            )
+        if self.defectdojo_tool_retry_backoff_base <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_RETRY_BACKOFF_BASE must be greater than 0."
+            )
+        if self.defectdojo_tool_retry_backoff_max <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_RETRY_BACKOFF_MAX must be greater than 0."
+            )
+        if self.defectdojo_tool_circuit_breaker_threshold <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_CIRCUIT_BREAKER_THRESHOLD must be greater than 0."
+            )
+        if self.defectdojo_tool_circuit_breaker_recovery <= 0:
+            raise ValueError(
+                "DEFECTDOJO_TOOL_CIRCUIT_BREAKER_RECOVERY must be greater than 0."
+            )
+        if self.agent_router_timeout <= 0:
+            raise ValueError("AGENT_ROUTER_TIMEOUT must be greater than 0.")
+        if self.agent_default_timeout <= 0:
+            raise ValueError("AGENT_DEFAULT_TIMEOUT must be greater than 0.")
+        if self.agent_import_timeout <= 0:
+            raise ValueError("AGENT_IMPORT_TIMEOUT must be greater than 0.")
+        if self.agent_risk_acceptance_timeout <= 0:
+            raise ValueError(
+                "AGENT_RISK_ACCEPTANCE_TIMEOUT must be greater than 0."
+            )
         if self.session_history_max_messages <= 0:
             raise ValueError(
                 "SESSION_HISTORY_MAX_MESSAGES must be greater than 0."
+            )
+        if self.context_history_token_budget <= 0:
+            raise ValueError(
+                "CONTEXT_HISTORY_TOKEN_BUDGET must be greater than 0."
+            )
+        if self.context_summary_token_budget <= 0:
+            raise ValueError(
+                "CONTEXT_SUMMARY_TOKEN_BUDGET must be greater than 0."
+            )
+        if self.context_summary_input_token_budget <= 0:
+            raise ValueError(
+                "CONTEXT_SUMMARY_INPUT_TOKEN_BUDGET must be greater than 0."
+            )
+        if self.context_max_chars <= 0:
+            raise ValueError("CONTEXT_MAX_CHARS must be greater than 0.")
+        if self.context_workflow_max_steps <= 0:
+            raise ValueError(
+                "CONTEXT_WORKFLOW_MAX_STEPS must be greater than 0."
+            )
+        if self.context_agent_output_max_chars <= 0:
+            raise ValueError(
+                "CONTEXT_AGENT_OUTPUT_MAX_CHARS must be greater than 0."
             )
         if self.chat_database_pool_size <= 0:
             raise ValueError("CHAT_DATABASE_POOL_SIZE must be greater than 0.")
@@ -217,6 +363,29 @@ class Settings:
             raise ValueError("KNOWLEDGE_TOP_K must be greater than 0.")
         if self.knowledge_max_chars <= 0:
             raise ValueError("KNOWLEDGE_MAX_CHARS must be greater than 0.")
+        self._hybrid_search_source_types: frozenset[str] | None = None
+        if self.hybrid_search_enabled:
+            if self.embedding_provider not in {"tei", "openai"}:
+                raise ValueError(
+                    "HYBRID_SEARCH_ENABLED requires EMBEDDING_PROVIDER=tei "
+                    "(or openai with a BGE-M3 compatible endpoint). "
+                    f"Current provider: {self.embedding_provider}."
+                )
+            raw = self.hybrid_search_source_types_raw.strip()
+            source_types = {
+                value.strip()
+                for value in raw.split(",")
+                if value.strip()
+            }
+            valid = {"library", "audit", "triage", "remediation"}
+            invalid = source_types - valid
+            if invalid:
+                raise ValueError(
+                    "HYBRID_SEARCH_SOURCE_TYPES contains unknown types: "
+                    f"{', '.join(sorted(invalid))}. "
+                    f"Valid: {', '.join(sorted(valid))}."
+                )
+            self._hybrid_search_source_types = frozenset(source_types)
         if self.embedding_provider not in {"fastembed", "openai", "tei"}:
             raise ValueError(
                 "EMBEDDING_PROVIDER must be 'fastembed', 'tei', or 'openai'."
@@ -252,3 +421,8 @@ class Settings:
 
 
 settings = Settings()
+
+
+def hybrid_search_source_types() -> frozenset[str]:
+    """Source types that should use hybrid (dense + sparse) search."""
+    return settings._hybrid_search_source_types or frozenset()

@@ -17,14 +17,28 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    Fusion,
+    FusionQuery,
     MatchAny,
     MatchValue,
+    PayloadSchemaType,
     PointIdsList,
     PointStruct,
-    PayloadSchemaType,
+    Prefetch,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
+from defectdojo_crewai.utils.retry import execute_with_resilience  # noqa: E402
+from defectdojo_crewai.utils.timeout_configs import get_timeout_config  # noqa: E402
+
+# Transient network / connection failures worth retrying for Qdrant.
+_RETRYABLE_QDRANT: tuple[type[Exception], ...] = (
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +56,15 @@ _SPLITTER = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
 
 class KnowledgeStore:
-    """Store and retrieve dense vectors from one Qdrant collection."""
+    """Store and retrieve dense vectors from one Qdrant collection.
+
+    When *sparse_embedder* is provided, the collection is upgraded with a
+    named ``"sparse"`` vector and ``search()`` uses reciprocal-rank-fusion
+    (RRF) for any source type listed in *hybrid_source_types*.
+    """
+
+    _SPARSE_VECTOR_NAME = "sparse"
+    _DEFAULT_PREFETCH_LIMIT = 20
 
     def __init__(
         self,
@@ -55,10 +77,14 @@ class KnowledgeStore:
         qdrant_prefer_grpc: bool,
         embedding_dimensions: int,
         embedding_model: str,
+        sparse_embedder: object | None = None,
+        hybrid_source_types: frozenset[str] = frozenset(),
     ) -> None:
         self.embeddings = embeddings
         self.collection_name = qdrant_collection_name
         self.embedding_model = embedding_model
+        self.sparse_embedder = sparse_embedder
+        self.hybrid_source_types = hybrid_source_types
         self.client = QdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key or None,
@@ -86,6 +112,22 @@ class KnowledgeStore:
             raise ValueError("Metadata count must match text count.")
 
         vectors = self.embeddings.embed_documents(list(texts))
+        sparse_vectors: list[dict | None] = []
+        if self.sparse_embedder is not None:
+            try:
+                sparse_vectors = self.sparse_embedder.embed(list(texts))
+            except Exception:
+                LOGGER.exception(
+                    "Failed to compute sparse vectors; falling back to "
+                    "dense-only for this batch."
+                )
+                sparse_vectors = [None] * len(texts)
+        else:
+            sparse_vectors = [None] * len(texts)
+
+        if len(sparse_vectors) != len(texts):
+            sparse_vectors = [None] * len(texts)
+
         point_ids = list(point_ids or [
             _point_id(source_type, source_id, index)
             for index in range(len(texts))
@@ -106,19 +148,38 @@ class KnowledgeStore:
                 "embedding_model": self.embedding_model,
                 **item_metadata,
             }
+            point_vector = _build_point_vector(
+                dense_vector=vector,
+                sparse_dict=(
+                    sparse_vectors[index]
+                    if index < len(sparse_vectors)
+                    else None
+                ),
+                sparse_vector_name=self._SPARSE_VECTOR_NAME,
+            )
             points.append(
                 PointStruct(
                     id=point_id,
-                    vector=vector,
+                    vector=point_vector,
                     payload=payload,
                 )
             )
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points,
-            wait=True,
+        collection = self.collection_name
+
+        def _upsert() -> list[str]:
+            self.client.upsert(
+                collection_name=collection,
+                points=points,
+                wait=True,
+            )
+            return point_ids
+
+        return execute_with_resilience(
+            "qdrant",
+            get_timeout_config("qdrant"),
+            _upsert,
+            retryable=_RETRYABLE_QDRANT,
         )
-        return point_ids
 
     def search(
         self,
@@ -146,17 +207,120 @@ class KnowledgeStore:
                 FieldCondition(key=key, match=MatchValue(value=value))
             )
 
-        response = self.client.query_points(
-            collection_name=self.collection_name,
-            query=self.embeddings.embed_query(query),
-            query_filter=Filter(must=conditions),
-            limit=max(1, k),
-            score_threshold=min_similarity,
-            with_payload=True,
-            with_vectors=False,
+        use_hybrid = (
+            self.sparse_embedder is not None
+            and bool(set(requested_source_types) & self.hybrid_source_types)
         )
+        if use_hybrid:
+            return self._hybrid_search(
+                query=query,
+                query_filter=Filter(must=conditions),
+                k=k,
+                min_similarity=min_similarity,
+            )
+
+        query_vector = self.embeddings.embed_query(query)
+        query_filter = Filter(must=conditions)
+        collection = self.collection_name
+        limit = max(1, k)
+
+        def _query() -> list:
+            resp = self.client.query_points(
+                collection_name=collection,
+                query=query_vector,
+                query_filter=query_filter,
+                limit=limit,
+                score_threshold=min_similarity,
+                with_payload=True,
+                with_vectors=False,
+            )
+            return self._transform_points(resp.points)
+
+        return execute_with_resilience(
+            "qdrant",
+            get_timeout_config("qdrant"),
+            _query,
+            retryable=_RETRYABLE_QDRANT,
+        )
+
+    def _hybrid_search(
+        self,
+        *,
+        query: str,
+        query_filter: Filter,
+        k: int,
+        min_similarity: float | None,
+    ) -> list[dict]:
+        """Dense + sparse hybrid retrieval with reciprocal-rank fusion."""
+        dense_vector: list[float] = self.embeddings.embed_query(query)
+
+        # Fetch extra candidates per shard — RRF merges from both sets.
+        prefetch_limit = max(k, self._DEFAULT_PREFETCH_LIMIT)
+
+        prefetch_queries = [
+            Prefetch(
+                query=dense_vector,
+                filter=query_filter,
+                limit=prefetch_limit,
+            ),
+        ]
+
+        try:
+            sparse_vectors = self.sparse_embedder.embed([query])
+        except Exception:
+            LOGGER.exception(
+                "Sparse query embedding failed; falling back to dense-only."
+            )
+            sparse_vectors = []
+
+        if sparse_vectors:
+            sparse_vec = sparse_vectors[0]
+            if sparse_vec.get("indices") and sparse_vec.get("values"):
+                prefetch_queries.append(
+                    Prefetch(
+                        query=SparseVector(
+                            indices=sparse_vec["indices"],
+                            values=sparse_vec["values"],
+                        ),
+                        using=self._SPARSE_VECTOR_NAME,
+                        filter=query_filter,
+                        limit=prefetch_limit,
+                    )
+                )
+
+        collection = self.collection_name
+        fusion_limit = max(1, k)
+
+        def _query_hybrid() -> list[dict]:
+            resp = self.client.query_points(
+                collection_name=collection,
+                prefetch=prefetch_queries,
+                query=FusionQuery(fusion=Fusion.RRF),
+                limit=fusion_limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            matches = self._transform_points(resp.points)
+            # min_similarity not natively supported by RRF; apply as post-filter.
+            if min_similarity is not None:
+                matches = [
+                    match
+                    for match in matches
+                    if float(match["score"]) >= min_similarity
+                ]
+            return matches
+
+        return execute_with_resilience(
+            "qdrant",
+            get_timeout_config("qdrant"),
+            _query_hybrid,
+            retryable=_RETRYABLE_QDRANT,
+        )
+
+    @staticmethod
+    def _transform_points(points: list) -> list[dict]:
         matches = []
-        for point in response.points:
+        for point in points:
             payload = dict(point.payload or {})
             matches.append(
                 {
@@ -238,6 +402,7 @@ class KnowledgeStore:
                     f"{embedding_dimensions}. Rebuild the collection before "
                     "starting the application."
                 )
+            self._ensure_sparse_vector_config(collection)
         else:
             self.client.create_collection(
                 collection_name=self.collection_name,
@@ -246,6 +411,7 @@ class KnowledgeStore:
                     distance=Distance.COSINE,
                 ),
             )
+            self._ensure_sparse_vector_config(None)
 
         for field_name in ("source_type", "intent", "severity", "cwe_id"):
             try:
@@ -261,6 +427,34 @@ class KnowledgeStore:
                     field_name,
                     exc_info=True,
                 )
+
+    def _ensure_sparse_vector_config(self, collection: object | None) -> None:
+        """Add named sparse vector to the collection when hybrid is enabled."""
+        if self.sparse_embedder is None:
+            return
+
+        existing_sparse: dict[str, object] = {}
+        if collection is not None:
+            sparse_config = getattr(
+                collection.config.params, "sparse_vectors", None
+            )
+            if sparse_config is not None:
+                existing_sparse = dict(sparse_config)
+
+        if self._SPARSE_VECTOR_NAME in existing_sparse:
+            return  # already configured
+
+        LOGGER.info(
+            "Adding sparse vector %r to collection %r for hybrid search.",
+            self._SPARSE_VECTOR_NAME,
+            self.collection_name,
+        )
+        self.client.update_collection(
+            collection_name=self.collection_name,
+            sparse_vectors_config={
+                self._SPARSE_VECTOR_NAME: SparseVectorParams(),
+            },
+        )
 
     def _points_for_source_type(self, source_type: str) -> dict[str, dict]:
         points: dict[str, dict] = {}
@@ -300,6 +494,8 @@ def build_knowledge_store(
     qdrant_collection_name: str,
     qdrant_timeout_seconds: int,
     qdrant_prefer_grpc: bool,
+    sparse_embedder: object | None = None,
+    hybrid_source_types: frozenset[str] = frozenset(),
 ) -> KnowledgeStore:
     return KnowledgeStore(
         embeddings=_build_embeddings(
@@ -316,6 +512,8 @@ def build_knowledge_store(
         qdrant_prefer_grpc=qdrant_prefer_grpc,
         embedding_dimensions=embedding_dimensions,
         embedding_model=embedding_model,
+        sparse_embedder=sparse_embedder,
+        hybrid_source_types=hybrid_source_types,
     )
 
 
@@ -356,3 +554,27 @@ def _content_hash(text: str) -> str:
 def _validate_source_type(source_type: str) -> None:
     if source_type not in SOURCE_TYPES:
         raise ValueError(f"Unsupported knowledge source type: {source_type}")
+
+
+def _build_point_vector(
+    *,
+    dense_vector: list[float],
+    sparse_dict: dict | None,
+    sparse_vector_name: str,
+) -> list[float] | dict[str, list[float] | SparseVector]:
+    """Return a point vector payload for Qdrant PointStruct.
+
+    When *sparse_dict* is None the return is a plain dense list (backward
+    compatible with unnamed vectors).  Otherwise the return is a dict with
+    the unnamed dense vector (``""`` key) and the named sparse vector.
+    """
+    if sparse_dict is None:
+        return dense_vector
+    indices = sparse_dict.get("indices")
+    values = sparse_dict.get("values")
+    if not indices or not values:
+        return dense_vector
+    return {
+        "": dense_vector,
+        sparse_vector_name: SparseVector(indices=list(indices), values=list(values)),
+    }

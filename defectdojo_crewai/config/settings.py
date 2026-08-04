@@ -35,6 +35,9 @@ load_env_file(ENV_PATH)
 
 class Settings:
     def __init__(self):
+        self.model = os.getenv("model")
+        self.api_key = os.getenv("api_key")
+        self.base_url = os.getenv("base_url")
         self.defectdojo_base_url = os.getenv("DEFECTDOJO_BASE_URL", "http://localhost:8080")
         self.defectdojo_api_key = os.getenv("DEFECTDOJO_API_KEY", "")
         self.defectdojo_engagement_id = int(os.getenv("DEFECTDOJO_ENGAGEMENT_ID", "1"))
@@ -94,6 +97,27 @@ class Settings:
         )
 
         self.log_level = os.getenv("LOG_LEVEL", "WARNING").upper()
+        self.business_log_level = os.getenv(
+            "BUSINESS_LOG_LEVEL",
+            self.log_level,
+        ).upper()
+        self.system_log_level = os.getenv(
+            "SYSTEM_LOG_LEVEL",
+            self.log_level,
+        ).upper()
+        self.console_system_log_level = os.getenv(
+            "CONSOLE_SYSTEM_LOG_LEVEL",
+            "WARNING",
+        ).upper()
+        self.log_dir = Path(
+            os.getenv("LOG_DIR", str(BASE_DIR / "data" / "logs"))
+        ).expanduser()
+        if not self.log_dir.is_absolute():
+            self.log_dir = (BASE_DIR / self.log_dir).resolve()
+        self.log_max_bytes = int(
+            os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024))
+        )
+        self.log_backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))
         self.knowledge_enabled = get_bool_env("KNOWLEDGE_ENABLED", True)
         self.knowledge_base_dir = Path(
             os.getenv(
@@ -360,6 +384,10 @@ class Settings:
             )
         if self.web_upload_max_bytes <= 0:
             raise ValueError("WEB_UPLOAD_MAX_BYTES must be greater than 0.")
+        if self.log_max_bytes <= 0:
+            raise ValueError("LOG_MAX_BYTES must be greater than 0.")
+        if self.log_backup_count < 0:
+            raise ValueError("LOG_BACKUP_COUNT must not be negative.")
         if self.knowledge_top_k <= 0:
             raise ValueError("KNOWLEDGE_TOP_K must be greater than 0.")
         if self.knowledge_max_chars <= 0:

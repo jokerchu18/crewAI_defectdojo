@@ -29,6 +29,8 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from defectdojo_crewai.utils.logging_config import configure_logging
+
 # ── configuration ──────────────────────────────────────────────────────
 
 DEFECTDOJO_BASE_URL: str = os.getenv("DEFECTDOJO_BASE_URL", "http://localhost:8080").rstrip("/")
@@ -269,10 +271,7 @@ async def get_finding_detail(finding_id: int) -> dict[str, Any]:
 
 def main() -> None:
     transport = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    )
+    configure_logging()
 
     if not DEFECTDOJO_API_KEY:
         LOGGER.warning(

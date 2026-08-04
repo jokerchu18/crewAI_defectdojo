@@ -26,19 +26,6 @@ _FINGERPRINT_MTIME: float = 0.0
 _STORE_LOCK = Lock()
 LOGGER = logging.getLogger(__name__)
 
-# ── Apply log level from settings ─────────────────────────────────────
-# WARNING by default; set LOG_LEVEL=INFO (or DEBUG) in .env to see timing.
-from defectdojo_crewai.config.settings import settings as _settings  # noqa: E402
-
-# Ensure root logger has at least one handler so log output is visible.
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=_settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-logging.getLogger("defectdojo_crewai.knowledge").setLevel(_settings.log_level)
-
 # ── Embedding cache ─────────────────────────────────────────────────────
 # Avoid recomputing the same query embedding on every tool call.
 # Sized to cover typical agent sessions; LRU eviction keeps memory bounded.

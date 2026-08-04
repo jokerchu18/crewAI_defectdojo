@@ -15,6 +15,10 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from defectdojo_crewai.config.settings import settings
+from defectdojo_crewai.utils.logging_config import configure_logging
+
+configure_logging()
+
 from defectdojo_crewai.models.schemas import ApprovalDecision, ChatRequest
 from defectdojo_crewai.services.approval_service import (
     decide_approval,
@@ -37,6 +41,8 @@ from defectdojo_crewai.services.session_service import (
     get_session_context,
     init_session_store,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "web_static"
@@ -171,7 +177,7 @@ async def approval_decision(request: Request) -> JSONResponse:
     try:
         approval = await run_in_threadpool(decide_approval, decision)
     except Exception as exc:
-        logging.exception("Approval decision failed")
+        LOGGER.exception("Approval decision failed")
         return JSONResponse(
             {
                 "detail": str(exc),
@@ -232,7 +238,7 @@ async def value_error(_: Request, exc: ValueError) -> JSONResponse:
 
 
 async def server_error(_: Request, exc: Exception) -> JSONResponse:
-    logging.exception("Unhandled web API error", exc_info=exc)
+    LOGGER.exception("Unhandled web API error", exc_info=exc)
     return JSONResponse(
         {"detail": "服务执行失败，请查看服务日志。"},
         status_code=500,

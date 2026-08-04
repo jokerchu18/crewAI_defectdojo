@@ -1,6 +1,5 @@
 from crewai import Task
 
-from defectdojo_crewai.agents.router import router_agent
 router_task = Task(
     description=(
         "分析以下用户请求：\n"
@@ -26,5 +25,4 @@ router_task = Task(
         "\"message\":\"\",\"confidence\":0.95}。"
     ),
     expected_output="包含有序 steps 数组的合法 JSON 工作流计划",
-    agent=router_agent,
 )

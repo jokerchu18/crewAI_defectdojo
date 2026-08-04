@@ -2,6 +2,7 @@ import argparse
 
 from crewai import Crew, Process
 from defectdojo_crewai.config.settings import settings
+from defectdojo_crewai.utils.logging_config import configure_logging
 from defectdojo_crewai.crews.exc_crew import exc_crew
 from defectdojo_crewai.crews.person_review import person_review
 from defectdojo_crewai.agents.scan_import import scan_import_agent
@@ -52,6 +53,7 @@ from defectdojo_crewai.tasks.risk_tasks import risk_acceptance_review_task,risk_
 
 
 def main():
+    configure_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "mode",
@@ -76,6 +78,7 @@ def main():
             host="127.0.0.1",
             port=8000,
             reload=False,
+            log_config=None,
         )
         return
 

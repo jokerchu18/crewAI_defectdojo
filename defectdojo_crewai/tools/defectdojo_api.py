@@ -1,10 +1,8 @@
-from ctypes.util import test
 from functools import wraps
 from pathlib import Path
 from threading import BoundedSemaphore
 import time
 from typing import Callable, ParamSpec, TypeVar
-from urllib import response
 import httpx
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -232,7 +230,13 @@ def defectdojo_import_scan_tool(
     engagement_id=payload["engagement_id"],
     product_id=payload["product_id"],
     )
-    
+
+    # Imported lazily to avoid a circular import: knowledge.kg.enricher
+    # imports finding tools from this module at import time.
+    from defectdojo_crewai.knowledge.kg.enricher import _enrich_kg_after_import
+
+    _enrich_kg_after_import(payload)
+
     return result
 
 # 读取漏洞列表工具

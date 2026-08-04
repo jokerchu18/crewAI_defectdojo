@@ -29,6 +29,16 @@ class _Crew:
         return _Crew.output
 
 
+class _FakeLLM:
+    def __init__(self, content: str):
+        self.content = content
+        self.last_prompt = None
+
+    def invoke(self, prompt):
+        self.last_prompt = prompt
+        return SimpleNamespace(content=self.content)
+
+
 class MemoryRoutingIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.context = build_agent_context(
@@ -39,26 +49,23 @@ class MemoryRoutingIntegrationTests(unittest.TestCase):
             workflow_context=WorkflowContext(),
         )
 
-    def test_router_task_receives_memory_context(self) -> None:
-        _Crew.output = {
-            "steps": [
-                {
-                    "step_id": "step_1",
-                    "intent": "triage",
-                }
-            ],
-            "confidence": 0.9,
-        }
+    def test_router_prompt_receives_memory_context(self) -> None:
+        fake_llm = _FakeLLM(
+            '{"steps": [{"step_id": "step_1", "intent": "triage"}], '
+            '"confidence": 0.9}'
+        )
 
-        with patch.object(routing_service, "Crew", _Crew):
+        with patch.object(routing_service, "llm", fake_llm):
             plan = routing_service.parse_workflow_plan(
                 "triage test 65",
                 agent_context=self.context,
             )
 
         self.assertEqual(plan.steps[0].intent, "triage")
-        self.assertIn("[MEMORY_CONTEXT]", _Crew.last_tasks[0].description)
-        self.assertIn('"test_id": 65', _Crew.last_tasks[0].description)
+        self.assertIn("[MEMORY_CONTEXT]", fake_llm.last_prompt)
+        self.assertIn('"test_id": 65', fake_llm.last_prompt)
+        self.assertIn("triage test 65", fake_llm.last_prompt)
+        self.assertNotIn("{user_message}", fake_llm.last_prompt)
 
     def test_run_crew_returns_agent_execution_record(self) -> None:
         _Crew.output = SimpleNamespace(

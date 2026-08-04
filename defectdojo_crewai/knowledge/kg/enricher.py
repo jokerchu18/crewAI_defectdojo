@@ -35,6 +35,26 @@ _DELAY_WITH_KEY = 0.3
 
 # ── public API ─────────────────────────────────────────────────────────
 
+def _enrich_kg_after_import(result: dict[str, Any]) -> None:
+    """Extract CVEs from imported findings and add to knowledge graph.
+
+    Runs fire-and-forget — failures are logged and never affect the import.
+    """
+    try:
+        from defectdojo_crewai.knowledge.kg.enricher import enrich_graph_from_scan
+    except Exception:
+        return
+
+    # output = result.get("output")
+    if not isinstance(result, dict):
+        return
+    try:
+        added = enrich_graph_from_scan(result)
+        if added:
+            LOGGER.info("KG enriched with %d CVE(s) from scan import.", added)
+    except Exception:
+        LOGGER.exception("KG enrichment after import failed (non-fatal)")
+
 
 def enrich_graph_from_scan(import_output: dict[str, Any]) -> int:
     """Called after scan import — extracts CVE IDs from findings and adds to graph.

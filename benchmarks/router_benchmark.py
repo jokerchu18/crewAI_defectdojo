@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from defectdojo_crewai.agents.router import router_agent
 from defectdojo_crewai.config.settings import settings
 from defectdojo_crewai.models.schemas import WorkflowPlan
 from defectdojo_crewai.services.routing_service import parse_workflow_plan
@@ -195,7 +194,6 @@ def main() -> None:
         return
 
     settings.crew_verbose = False
-    router_agent.verbose = False
 
     results = []
     for index, case in enumerate(CASES, start=1):
@@ -233,7 +231,7 @@ def main() -> None:
 
     summary = summarize(results)
     output = {
-        "model": router_agent.llm.model,
+        "model": settings.model,
         "case_count": len(CASES),
         "summary": summary,
         "results": results,

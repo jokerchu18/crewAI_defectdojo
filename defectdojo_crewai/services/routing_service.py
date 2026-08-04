@@ -8,7 +8,7 @@ from pydantic import RootModel
 from defectdojo_crewai.agents.deduplication import deduplication_agent
 from defectdojo_crewai.agents.remediation import remediation_agent
 from defectdojo_crewai.agents.risk_acceptance import risk_acceptance_review_agent
-from defectdojo_crewai.agents.router import router_agent
+from defectdojo_crewai.agents.router import llm
 from defectdojo_crewai.agents.scan_import import scan_import_agent
 from defectdojo_crewai.agents.triage import triage_agent
 from defectdojo_crewai.config.settings import settings
@@ -77,6 +77,8 @@ from defectdojo_crewai.tools.defectdojo_api import (
     defectdojo_get_finding_tool,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 
 class _WorkflowStepList(RootModel[list[WorkflowStep]]):
     """Recovers a bare steps array when the surrounding plan JSON is broken."""
@@ -88,28 +90,32 @@ def parse_workflow_plan(
     agent_context: AgentContext | None = None,
 ) -> WorkflowPlan:
     prepared_router_task = prepare_task_with_context(router_task, agent_context)
-    crew = Crew(
-        agents=[router_agent],
-        tasks=[prepared_router_task],
-        process=Process.sequential,
-        verbose=settings.crew_verbose,
+    # prepare_task_with_context escapes braces for CrewAI interpolation; undo
+    # that here because the LLM is invoked directly without a Crew.
+    prompt = (
+        prepared_router_task.description
+        .replace("{{", "{")
+        .replace("}}", "}")
+        .replace("{user_message}", user_message)
     )
+
     router_config = AGENT_TIMEOUTS["router"]
     result = execute_agent_with_timeout(
         "router",
         router_config,
-        crew.kickoff,
-        inputs={"user_message": user_message},
+        llm.invoke,
+        prompt,
     )
+    output = result.content
     try:
-        plan = parse_model_output(result, WorkflowPlan)
+        plan = parse_model_output(output, WorkflowPlan)
     except ValueError:
-        plan = _recover_workflow_plan(result)
+        plan = _recover_workflow_plan(output)
     if not plan.steps:
         # A syntactically valid but empty plan usually means the router's JSON
         # was malformed and a sub-fragment slipped through; try recovery before
         # giving up so multi-step workflows are not silently dropped.
-        recovered = _try_recover_workflow_plan(result)
+        recovered = _try_recover_workflow_plan(output)
         if recovered is not None:
             plan = recovered
     validated_plan = _validate_workflow_plan(plan)
@@ -211,7 +217,7 @@ def handle_chat_request(request: ChatRequest) -> ChatResponse:
                 result={"status": "failed"},
             )
         except Exception:
-            logging.exception("Failed to persist failure message to history")
+            LOGGER.exception("Failed to persist failure message to history")
         raise
     append_message(
         request.session_id,
@@ -1116,31 +1122,11 @@ def _run_import_scan(
     )
 
     # ── on-demand CVE enrichment ──────────────────────────────────
-    if result.get("status") == "completed":
-        _enrich_kg_after_import(result)
+    # if result.get("status") == "completed":
+    #     _enrich_kg_after_import(result)
 
     return result
 
-
-def _enrich_kg_after_import(result: dict[str, Any]) -> None:
-    """Extract CVEs from imported findings and add to knowledge graph.
-
-    Runs fire-and-forget — failures are logged and never affect the import.
-    """
-    try:
-        from defectdojo_crewai.knowledge.kg.enricher import enrich_graph_from_scan
-    except Exception:
-        return
-
-    output = result.get("output")
-    if not isinstance(output, dict):
-        return
-    try:
-        added = enrich_graph_from_scan(output)
-        if added:
-            logging.info("KG enriched with %d CVE(s) from scan import.", added)
-    except Exception:
-        logging.exception("KG enrichment after import failed (non-fatal)")
 
 
 def _query_findings(intent: UserIntent) -> dict[str, Any]:

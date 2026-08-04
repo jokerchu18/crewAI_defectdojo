@@ -1104,7 +1104,7 @@ def _run_import_scan(
         "scan_type": intent.scan_type or settings.default_scan_type,
         "file_path": intent.file_path or settings.default_scan_file_path,
     }
-    return _run_crew(
+    result = _run_crew(
         scan_import_agent,
         import_scan_task,
         inputs,
@@ -1114,6 +1114,33 @@ def _run_import_scan(
         agent_context=agent_context,
         agent_name="import_scan",
     )
+
+    # ── on-demand CVE enrichment ──────────────────────────────────
+    if result.get("status") == "completed":
+        _enrich_kg_after_import(result)
+
+    return result
+
+
+def _enrich_kg_after_import(result: dict[str, Any]) -> None:
+    """Extract CVEs from imported findings and add to knowledge graph.
+
+    Runs fire-and-forget — failures are logged and never affect the import.
+    """
+    try:
+        from defectdojo_crewai.knowledge.kg.enricher import enrich_graph_from_scan
+    except Exception:
+        return
+
+    output = result.get("output")
+    if not isinstance(output, dict):
+        return
+    try:
+        added = enrich_graph_from_scan(output)
+        if added:
+            logging.info("KG enriched with %d CVE(s) from scan import.", added)
+    except Exception:
+        logging.exception("KG enrichment after import failed (non-fatal)")
 
 
 def _query_findings(intent: UserIntent) -> dict[str, Any]:

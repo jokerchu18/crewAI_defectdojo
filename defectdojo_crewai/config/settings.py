@@ -93,6 +93,7 @@ class Settings:
             r"D:\github\crewAI_defectdojo\sample_reports\sample_multi.sarif",
         )
 
+        self.log_level = os.getenv("LOG_LEVEL", "WARNING").upper()
         self.knowledge_enabled = get_bool_env("KNOWLEDGE_ENABLED", True)
         self.knowledge_base_dir = Path(
             os.getenv(
@@ -173,7 +174,7 @@ class Settings:
             "defectdojo_knowledge",
         )
         self.qdrant_timeout_seconds = int(
-            os.getenv("QDRANT_TIMEOUT_SECONDS", "30")
+            os.getenv("QDRANT_TIMEOUT_SECONDS", "10")
         )
         self.qdrant_tool_connect_timeout = float(
             os.getenv("QDRANT_TOOL_CONNECT_TIMEOUT", "5")

@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
+
+# ── Pre-import heavy packages ──────────────────────────────────────────
+# The first instantiation of OpenAIEmbeddings / QdrantClient triggers
+# lazy imports of the `openai` and `qdrant_client` packages (~3-4 s each).
+# Force them here so the cost is paid once at module-load time, not on the
+# first user-facing knowledge tool call.
+import openai  # noqa: F401  ≈3 s
+import qdrant_client  # noqa: F401  ≈1 s
 
 from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_core.embeddings import Embeddings
@@ -80,18 +89,28 @@ class KnowledgeStore:
         sparse_embedder: object | None = None,
         hybrid_source_types: frozenset[str] = frozenset(),
     ) -> None:
+        t0 = time.perf_counter()
         self.embeddings = embeddings
         self.collection_name = qdrant_collection_name
         self.embedding_model = embedding_model
         self.sparse_embedder = sparse_embedder
         self.hybrid_source_types = hybrid_source_types
+        t_client = time.perf_counter()
         self.client = QdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key or None,
             timeout=qdrant_timeout_seconds,
             prefer_grpc=qdrant_prefer_grpc,
         )
+        t_client_ms = (time.perf_counter() - t_client) * 1000
+        t_coll = time.perf_counter()
         self._ensure_collection(embedding_dimensions)
+        t_coll_ms = (time.perf_counter() - t_coll) * 1000
+        total_ms = (time.perf_counter() - t0) * 1000
+        LOGGER.info(
+            "KnowledgeStore.__init__ | client=%.1fms ensure_coll=%.1fms total=%.1fms",
+            t_client_ms, t_coll_ms, total_ms,
+        )
 
     def close(self) -> None:
         self.client.close()
@@ -189,6 +208,8 @@ class KnowledgeStore:
         filters: dict[str, str | int | bool] | None = None,
         k: int = 4,
         min_similarity: float | None = None,
+        dense_vector_override: list[float] | None = None,
+        sparse_vector_override: dict[str, Any] | None = None,
     ) -> list[dict]:
         if not query.strip():
             return []
@@ -217,31 +238,57 @@ class KnowledgeStore:
                 query_filter=Filter(must=conditions),
                 k=k,
                 min_similarity=min_similarity,
+                dense_vector_override=dense_vector_override,
+                sparse_vector_override=sparse_vector_override,
             )
 
-        query_vector = self.embeddings.embed_query(query)
+        # Use pre-computed vector when available; otherwise compute inline.
+        t_embed = time.perf_counter()
+        query_vector = dense_vector_override
+        if query_vector is None:
+            query_vector = self.embeddings.embed_query(query)
+        t_embed_ms = (time.perf_counter() - t_embed) * 1000
+
         query_filter = Filter(must=conditions)
         collection = self.collection_name
         limit = max(1, k)
 
-        def _query() -> list:
-            resp = self.client.query_points(
-                collection_name=collection,
-                query=query_vector,
-                query_filter=query_filter,
-                limit=limit,
-                score_threshold=min_similarity,
-                with_payload=True,
-                with_vectors=False,
-            )
-            return self._transform_points(resp.points)
-
-        return execute_with_resilience(
+        t_api = time.perf_counter()
+        result = execute_with_resilience(
             "qdrant",
             get_timeout_config("qdrant"),
-            _query,
+            lambda: self._query_points(
+                collection, query_vector, query_filter, limit, min_similarity,
+            ),
             retryable=_RETRYABLE_QDRANT,
         )
+        t_api_ms = (time.perf_counter() - t_api) * 1000
+        LOGGER.info(
+            "store.search DENSE | query=%.60s | embed=%.1fms qdrant_api=%.1fms | "
+            "results=%d",
+            query, t_embed_ms, t_api_ms, len(result),
+        )
+
+        return result
+
+    def _query_points(
+        self,
+        collection: str,
+        query_vector: list[float],
+        query_filter: Filter,
+        limit: int,
+        min_similarity: float | None,
+    ) -> list[dict]:
+        resp = self.client.query_points(
+            collection_name=collection,
+            query=query_vector,
+            query_filter=query_filter,
+            limit=limit,
+            score_threshold=min_similarity,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return self._transform_points(resp.points)
 
     def _hybrid_search(
         self,
@@ -250,9 +297,17 @@ class KnowledgeStore:
         query_filter: Filter,
         k: int,
         min_similarity: float | None,
+        dense_vector_override: list[float] | None = None,
+        sparse_vector_override: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Dense + sparse hybrid retrieval with reciprocal-rank fusion."""
-        dense_vector: list[float] = self.embeddings.embed_query(query)
+        t0 = time.perf_counter()
+
+        t_dense = time.perf_counter()
+        dense_vector: list[float] = (
+            dense_vector_override or self.embeddings.embed_query(query)
+        )
+        t_dense_ms = (time.perf_counter() - t_dense) * 1000
 
         # Fetch extra candidates per shard — RRF merges from both sets.
         prefetch_limit = max(k, self._DEFAULT_PREFETCH_LIMIT)
@@ -265,57 +320,89 @@ class KnowledgeStore:
             ),
         ]
 
-        try:
-            sparse_vectors = self.sparse_embedder.embed([query])
-        except Exception:
-            LOGGER.exception(
-                "Sparse query embedding failed; falling back to dense-only."
-            )
-            sparse_vectors = []
-
-        if sparse_vectors:
-            sparse_vec = sparse_vectors[0]
-            if sparse_vec.get("indices") and sparse_vec.get("values"):
-                prefetch_queries.append(
-                    Prefetch(
-                        query=SparseVector(
-                            indices=sparse_vec["indices"],
-                            values=sparse_vec["values"],
-                        ),
-                        using=self._SPARSE_VECTOR_NAME,
-                        filter=query_filter,
-                        limit=prefetch_limit,
-                    )
+        t_sparse = time.perf_counter()
+        if sparse_vector_override and sparse_vector_override.get("indices") and sparse_vector_override.get("values"):
+            prefetch_queries.append(
+                Prefetch(
+                    query=SparseVector(
+                        indices=sparse_vector_override["indices"],
+                        values=sparse_vector_override["values"],
+                    ),
+                    using=self._SPARSE_VECTOR_NAME,
+                    filter=query_filter,
+                    limit=prefetch_limit,
                 )
+            )
+        else:
+            try:
+                sparse_vectors = self.sparse_embedder.embed([query])
+            except Exception:
+                LOGGER.exception(
+                    "Sparse query embedding failed; falling back to dense-only."
+                )
+                sparse_vectors = []
+
+            if sparse_vectors:
+                sparse_vec = sparse_vectors[0]
+                if sparse_vec.get("indices") and sparse_vec.get("values"):
+                    prefetch_queries.append(
+                        Prefetch(
+                            query=SparseVector(
+                                indices=sparse_vec["indices"],
+                                values=sparse_vec["values"],
+                            ),
+                            using=self._SPARSE_VECTOR_NAME,
+                            filter=query_filter,
+                            limit=prefetch_limit,
+                        )
+                    )
+        t_sparse_ms = (time.perf_counter() - t_sparse) * 1000
 
         collection = self.collection_name
         fusion_limit = max(1, k)
 
-        def _query_hybrid() -> list[dict]:
-            resp = self.client.query_points(
-                collection_name=collection,
-                prefetch=prefetch_queries,
-                query=FusionQuery(fusion=Fusion.RRF),
-                limit=fusion_limit,
-                with_payload=True,
-                with_vectors=False,
-            )
-            matches = self._transform_points(resp.points)
-            # min_similarity not natively supported by RRF; apply as post-filter.
-            if min_similarity is not None:
-                matches = [
-                    match
-                    for match in matches
-                    if float(match["score"]) >= min_similarity
-                ]
-            return matches
-
-        return execute_with_resilience(
+        t_api = time.perf_counter()
+        result = execute_with_resilience(
             "qdrant",
             get_timeout_config("qdrant"),
-            _query_hybrid,
+            lambda: self._query_hybrid_points(
+                collection, prefetch_queries, fusion_limit, min_similarity,
+            ),
             retryable=_RETRYABLE_QDRANT,
         )
+        t_api_ms = (time.perf_counter() - t_api) * 1000
+
+        total_ms = (time.perf_counter() - t0) * 1000
+        LOGGER.info(
+            "store.search HYBRID | query=%.60s | dense=%.1fms sparse=%.1fms "
+            "qdrant_api=%.1fms total=%.1fms | results=%d",
+            query, t_dense_ms, t_sparse_ms, t_api_ms, total_ms, len(result),
+        )
+        return result
+
+    def _query_hybrid_points(
+        self,
+        collection: str,
+        prefetch_queries: list,
+        fusion_limit: int,
+        min_similarity: float | None,
+    ) -> list[dict]:
+        resp = self.client.query_points(
+            collection_name=collection,
+            prefetch=prefetch_queries,
+            query=FusionQuery(fusion=Fusion.RRF),
+            limit=fusion_limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        matches = self._transform_points(resp.points)
+        if min_similarity is not None:
+            matches = [
+                match
+                for match in matches
+                if float(match["score"]) >= min_similarity
+            ]
+        return matches
 
     @staticmethod
     def _transform_points(points: list) -> list[dict]:
@@ -387,8 +474,17 @@ class KnowledgeStore:
         return len(desired)
 
     def _ensure_collection(self, embedding_dimensions: int) -> None:
-        if self.client.collection_exists(self.collection_name):
+        t0 = time.perf_counter()
+
+        t_exists = time.perf_counter()
+        exists = self.client.collection_exists(self.collection_name)
+        t_exists_ms = (time.perf_counter() - t_exists) * 1000
+
+        if exists:
+            t_get = time.perf_counter()
             collection = self.client.get_collection(self.collection_name)
+            t_get_ms = (time.perf_counter() - t_get) * 1000
+
             vectors = collection.config.params.vectors
             current_size = (
                 vectors[""].size
@@ -402,8 +498,11 @@ class KnowledgeStore:
                     f"{embedding_dimensions}. Rebuild the collection before "
                     "starting the application."
                 )
+            t_sparse = time.perf_counter()
             self._ensure_sparse_vector_config(collection)
+            t_sparse_ms = (time.perf_counter() - t_sparse) * 1000
         else:
+            t_create = time.perf_counter()
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
@@ -411,15 +510,25 @@ class KnowledgeStore:
                     distance=Distance.COSINE,
                 ),
             )
+            t_create_ms = (time.perf_counter() - t_create) * 1000
+            t_get_ms = 0.0
+            t_sparse = time.perf_counter()
             self._ensure_sparse_vector_config(None)
+            t_sparse_ms = (time.perf_counter() - t_sparse) * 1000
+            LOGGER.info(
+                "_ensure_collection CREATE | exists=%.1fms create=%.1fms "
+                "sparse=%.1fms",
+                t_exists_ms, t_create_ms, t_sparse_ms,
+            )
 
+        t_index = time.perf_counter()
         for field_name in ("source_type", "intent", "severity", "cwe_id"):
             try:
                 self.client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name=field_name,
                     field_schema=PayloadSchemaType.KEYWORD,
-                    wait=True,
+                    wait=False,
                 )
             except Exception:
                 LOGGER.debug(
@@ -427,6 +536,14 @@ class KnowledgeStore:
                     field_name,
                     exc_info=True,
                 )
+        t_index_ms = (time.perf_counter() - t_index) * 1000
+
+        total_ms = (time.perf_counter() - t0) * 1000
+        LOGGER.info(
+            "_ensure_collection TIMING | exists=%.1fms get_coll=%.1fms "
+            "sparse=%.1fms indexes=%.1fms | total=%.1fms",
+            t_exists_ms, t_get_ms, t_sparse_ms, t_index_ms, total_ms,
+        )
 
     def _ensure_sparse_vector_config(self, collection: object | None) -> None:
         """Add named sparse vector to the collection when hybrid is enabled."""
@@ -525,21 +642,33 @@ def _build_embeddings(
     api_key: str,
     base_url: str | None,
 ) -> Embeddings:
+    t0 = time.perf_counter()
     if provider == "fastembed":
-        return FastEmbedEmbeddings(
+        result = FastEmbedEmbeddings(
             model_name=model,
             cache_dir=str(cache_dir),
         )
+        LOGGER.info(
+            "_build_embeddings fastembed | model=%s | %.1fms",
+            model, (time.perf_counter() - t0) * 1000,
+        )
+        return result
     if provider in {"openai", "tei"}:
         options = {
             "api_key": api_key,
             "model": model,
+            "max_retries": 1,
         }
         if base_url:
             options["base_url"] = base_url
         if provider == "tei":
             options["check_embedding_ctx_length"] = False
-        return OpenAIEmbeddings(**options)
+        result = OpenAIEmbeddings(**options)
+        LOGGER.info(
+            "_build_embeddings %s | model=%s base_url=%s | %.1fms",
+            provider, model, base_url, (time.perf_counter() - t0) * 1000,
+        )
+        return result
     raise ValueError(f"Unsupported embedding provider: {provider}")
 
 

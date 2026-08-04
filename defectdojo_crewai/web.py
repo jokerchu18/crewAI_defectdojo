@@ -43,7 +43,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "web_static"
 ALLOWED_REPORT_SUFFIXES = {".sarif", ".nessus", ".xml", ".json"}
 SCAN_TYPE_BY_SUFFIX = {
     ".sarif": "SARIF",
-    ".nessus": "Nessus Scan",
+    ".nessus": "Tenable Scan",
 }
 
 
@@ -168,7 +168,18 @@ async def approval_decision(request: Request) -> JSONResponse:
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
-    approval = await run_in_threadpool(decide_approval, decision)
+    try:
+        approval = await run_in_threadpool(decide_approval, decision)
+    except Exception as exc:
+        logging.exception("Approval decision failed")
+        return JSONResponse(
+            {
+                "detail": str(exc),
+                "approval_id": decision.approval_id,
+                "status": "failed",
+            },
+            status_code=400,
+        )
     return JSONResponse(approval)
 
 

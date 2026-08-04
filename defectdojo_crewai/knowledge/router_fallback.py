@@ -16,7 +16,8 @@ def annotate_router_fallback(
     plan: WorkflowPlan,
     user_message: str,
 ) -> WorkflowPlan:
-    """Probe decision history without changing the Router's selected steps."""
+    """Probe decision history and knowledge graph without changing the
+    Router's selected steps."""
     if plan.confidence >= settings.router_fallback_confidence_threshold:
         return _with_audit_defaults(plan)
 
@@ -26,7 +27,44 @@ def annotate_router_fallback(
         k=settings.router_fallback_top_k,
         min_similarity=settings.knowledge_min_similarity,
     )
-    return _apply_outcome(plan, outcome)
+    plan = _apply_outcome(plan, outcome)
+
+    # ── knowledge-graph injection (deterministic, fast, complements RAG) ─
+    # if plan.fallback_used != "decision_history":
+    #     plan = _try_kg_injection(plan, user_message)
+
+    return plan
+
+
+def _try_kg_injection(plan: WorkflowPlan, user_message: str) -> WorkflowPlan:
+    """Attempt to enrich the plan with knowledge-graph context.
+
+    If CWE / CVE / OWASP references are found in the user message,
+    graph-sourced context blocks are added to *context_injections* and
+    *fallback_used* is set to ``"kg_auto_inject"``.
+    """
+    try:
+        from defectdojo_crewai.knowledge.kg import inject_kg_context
+    except Exception:
+        return plan
+
+    injections = inject_kg_context(user_message)
+    if not injections:
+        return plan
+
+    return plan.model_copy(
+        update={
+            "fallback_used": "kg_auto_inject",
+            "fallback_similarity": None,
+            "fallback_reason": (
+                f"Graph injection — {len(injections)} context block(s)"
+            ),
+            "needs_human_review": False,
+            "context_injections": [
+                inj.model_dump() for inj in injections
+            ],
+        }
+    )
 
 
 def _apply_outcome(

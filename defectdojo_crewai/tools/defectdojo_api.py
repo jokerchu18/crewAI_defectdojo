@@ -30,6 +30,15 @@ _RETRYABLE_HTTPX: tuple[type[Exception], ...] = (
     httpx.PoolTimeout,
 )
 
+_SCAN_TYPE_ALIASES = {
+    "nessus scan": "Tenable Scan",
+}
+
+
+def _canonical_scan_type(scan_type: str) -> str:
+    """Use parser names from the installed DefectDojo version."""
+    return _SCAN_TYPE_ALIASES.get(scan_type.strip().lower(), scan_type)
+
 
 def _httpx_timeout(name: str) -> httpx.Timeout:
     """Build an ``httpx.Timeout`` from the named ``TimeoutConfig`` preset."""
@@ -170,6 +179,7 @@ def defectdojo_import_scan_tool(
     if not file_path.exists():
         raise FileNotFoundError(f"Scan file not found: {file_path}")
 
+    scan_type = _canonical_scan_type(scan_type)
     url = f"{base_url.rstrip('/')}/api/v2/import-scan/"
     headers = {
         "Authorization": f"Token {api_key}",
@@ -194,7 +204,18 @@ def defectdojo_import_scan_tool(
                 files=files,
                 timeout=timeout,
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = resp.text.strip()
+                if detail:
+                    detail = detail[:2000]
+                    raise httpx.HTTPStatusError(
+                        f"{exc} | DefectDojo response: {detail}",
+                        request=exc.request,
+                        response=exc.response,
+                    ) from exc
+                raise
             return resp
 
     response = execute_with_resilience(

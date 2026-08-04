@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import httpx
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,7 @@ from defectdojo_crewai.services.tool_policy import (
     request_write_tool_approval,
 )
 from defectdojo_crewai.tools import defectdojo_api
+from defectdojo_crewai.utils.retry import with_timeout
 
 
 class _DummyWriteInput(BaseModel):
@@ -111,6 +113,84 @@ class ToolPolicyTests(unittest.TestCase):
             approvals[0]["payload"]["tool_calls"][0]["arguments"],
             {"value": 11},
         )
+
+    def test_capture_context_is_preserved_in_timeout_worker(self) -> None:
+        tool = gated_write_tool(
+            _DummyWriteTool(),
+            requested_by="test_agent",
+        )
+
+        with capture_write_approvals(
+            workflow_id="workflow-123",
+            step_id="step-import",
+        ) as approvals:
+            pending = with_timeout(1, tool.run, value=13)
+
+        self.assertEqual(pending["status"], "waiting_approval")
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["workflow_id"], "workflow-123")
+        self.assertEqual(approvals[0]["step_id"], "step-import")
+
+    def test_import_scan_error_includes_defectdojo_response(self) -> None:
+        report_path = Path(self.temp_dir.name) / "scan.nessus"
+        report_path.write_text("<NessusClientData_v2 />", encoding="utf-8")
+        request = httpx.Request(
+            "POST",
+            "http://dojo.test/api/v2/import-scan/",
+        )
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"scan_type": ["Unsupported scan type."]},
+        )
+
+        with patch.object(
+            defectdojo_api.httpx,
+            "post",
+            return_value=response,
+        ):
+            with self.assertRaisesRegex(
+                httpx.HTTPStatusError,
+                "Unsupported scan type",
+            ):
+                defectdojo_api.defectdojo_import_scan_tool(
+                    base_url="http://dojo.test",
+                    api_key="test-token",
+                    scan_type="Nessus Scan",
+                    engagement_id=1,
+                    scan_file_path=str(report_path),
+                )
+
+    def test_import_scan_uses_tenable_parser_alias(self) -> None:
+        report_path = Path(self.temp_dir.name) / "scan.nessus"
+        report_path.write_text("<NessusClientData_v2 />", encoding="utf-8")
+        response = httpx.Response(
+            200,
+            request=httpx.Request(
+                "POST",
+                "http://dojo.test/api/v2/import-scan/",
+            ),
+            json={
+                "test_id": 10,
+                "engagement_id": 1,
+                "product_id": 8,
+            },
+        )
+
+        with patch.object(
+            defectdojo_api.httpx,
+            "post",
+            return_value=response,
+        ) as post:
+            defectdojo_api.defectdojo_import_scan_tool(
+                base_url="http://dojo.test",
+                api_key="test-token",
+                scan_type="Nessus Scan",
+                engagement_id=1,
+                scan_file_path=str(report_path),
+            )
+
+        self.assertEqual(post.call_args.kwargs["data"]["scan_type"], "Tenable Scan")
 
     def test_edited_approval_cannot_replace_tool_identity(self) -> None:
         tool_call = WriteToolCall(

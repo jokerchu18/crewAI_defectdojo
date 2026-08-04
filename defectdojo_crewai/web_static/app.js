@@ -322,6 +322,7 @@ async function sendMessage(message) {
     pending.article.remove();
     addMessage("assistant", `请求失败：${error.message}`);
     elements.workflowState.textContent = "需要检查";
+    await loadApprovals();
   } finally {
     clearInterval(progressTimer);
     elements.workflowState.classList.remove("state-running");
@@ -583,6 +584,8 @@ async function decideApproval(decision) {
   } catch (error) {
     addMessage("assistant", `审批失败：${error.message}`);
     setApprovalBusy(false);
+    closeApprovalDialog();
+    await loadApprovals();
   }
 }
 

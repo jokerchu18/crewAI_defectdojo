@@ -25,6 +25,7 @@ def test_library_tool_retrieves_triage_knowledge() -> None:
     )
     assert matches, "知识库工具没有检索到任何 library 记录。"
     content = "\n".join(match["content"] for match in matches)
+    print(content)
     missing = [phrase for phrase in EXPECTED_PHRASES if phrase not in content]
     assert not missing, f"检索结果缺少分诊关键短语: {missing}"
 

@@ -14,6 +14,7 @@ import random
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from threading import Lock
@@ -322,7 +323,8 @@ def with_timeout(
         uses daemon threads so the process can still exit.
     """
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-timeout") as pool:
-        future = pool.submit(func, *args, **kwargs)
+        context = copy_context()
+        future = pool.submit(context.run, func, *args, **kwargs)
         try:
             return future.result(timeout=seconds)
         except FutureTimeoutError:

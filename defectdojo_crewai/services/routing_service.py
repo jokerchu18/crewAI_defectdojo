@@ -7,7 +7,7 @@ from pydantic import RootModel
 
 from defectdojo_crewai.agents.deduplication import deduplication_agent
 from defectdojo_crewai.agents.remediation import remediation_agent
-from defectdojo_crewai.agents.risk_acceptance import risk_acceptance_review_agent
+from defectdojo_crewai.agents.risk_acceptance import risk_acceptance_agent
 from defectdojo_crewai.agents.router import llm
 from defectdojo_crewai.agents.scan_import import scan_import_agent
 from defectdojo_crewai.agents.triage import triage_agent
@@ -25,7 +25,7 @@ from defectdojo_crewai.models.schemas import (
     ChatRequest,
     ChatResponse,
     ConversationContext,
-    RiskAcceptanceReviewResult,
+    RiskAcceptanceResult,
     UserIntent,
     WorkflowPlan,
     WorkflowStep,
@@ -42,6 +42,7 @@ from defectdojo_crewai.services.progress_service import (
     set_progress_steps,
     update_progress_step,
 )
+from defectdojo_crewai.services.report_service import generate_workflow_report
 from defectdojo_crewai.knowledge.router_fallback import annotate_router_fallback
 from defectdojo_crewai.services.session_service import (
     get_session_context,
@@ -535,6 +536,20 @@ def _continue_workflow(run: WorkflowRun) -> ChatResponse:
         run.plan.message,
         step_results,
     )
+
+    report_info: dict[str, Any] | None = None
+    if workflow_status == "completed":
+        report_info = generate_workflow_report(
+            workflow_id=run.workflow_id,
+            user_message=run.user_message,
+            workflow_status=workflow_status,
+            step_results=step_results,
+        )
+        if report_info:
+            final_message = (
+                f"{final_message}\n漏洞分析报告已生成: {report_info['report_path']}"
+            )
+
     finish_progress(run.session_id, workflow_status, final_message)
     enqueue_router_outcome(
         workflow_id=run.workflow_id,
@@ -553,6 +568,7 @@ def _continue_workflow(run: WorkflowRun) -> ChatResponse:
             "steps": step_results,
             "message": final_message,
             "plan": run.plan.model_dump(mode="json"),
+            **({"report": report_info} if report_info else {}),
         },
     )
 
@@ -1090,7 +1106,7 @@ def _run_remediation(
     return _run_crew(
         remediation_agent,
         remediation_request_task,
-        {"product_id": intent.product_id},
+        {"test_id": intent.test_id},
         workflow_id=workflow_id,
         step_id=step_id,
         agent_context=agent_context,
@@ -1167,7 +1183,7 @@ def _request_risk_acceptance(
         agent_context,
     )
     crew = Crew(
-        agents=[risk_acceptance_review_agent],
+        agents=[risk_acceptance_agent],
         tasks=[prepared_task],
         process=Process.sequential,
         verbose=settings.crew_verbose,
@@ -1183,10 +1199,10 @@ def _request_risk_acceptance(
     )
     execution = capture_agent_execution(
         result,
-        risk_acceptance_review_agent,
+        risk_acceptance_agent,
         prepared_task,
     ).model_dump(mode="json")
-    review_result = parse_model_output(result, RiskAcceptanceReviewResult)
+    review_result = parse_model_output(result, RiskAcceptanceResult)
 
     all_candidates = [
         candidate.model_dump()
@@ -1206,7 +1222,7 @@ def _request_risk_acceptance(
             "agent_execution": execution,
         }
 
-    requested_by = "risk_acceptance_review_agent"
+    requested_by = "risk_acceptance_agent"
     tool_calls = build_risk_acceptance_tool_calls(
         accept_candidates,
         requested_by=requested_by,

@@ -379,6 +379,50 @@ def defectdojo_get_finding_by_product_tool(
     )
     return response.json()
 
+# 读取findings by test id工具
+
+class DefectDojoGetFindingByTestIDInput(BaseModel):
+    test_id: int = Field(..., description="DefectDojo test ID")
+
+class DefectDojoGetFindingByTestIDTool(BaseTool):
+    name: str = "defectdojo_get_finding_by_Test_tool"
+    description: str = "从 DefectDojo 获取 finding "
+    args_schema: type[BaseModel] = DefectDojoGetFindingByTestIDInput
+
+    def _run(
+        self,
+        test_id: int,
+    ):
+        return defectdojo_get_finding_by_test_tool(
+            base_url=settings.defectdojo_base_url,
+            api_key=settings.defectdojo_api_key,
+            test_id=test_id,
+        )
+
+@_limit_defectdojo_tool
+def defectdojo_get_finding_by_test_tool(
+    base_url: str,
+    api_key: str,
+    test_id: int,
+) -> dict:
+    url = f"{base_url.rstrip('/')}/api/v2/findings/?test={test_id}"
+    headers = {
+        "Authorization": f"Token {api_key}",
+    }
+    timeout = _httpx_timeout("defectdojo_read")
+
+    def _get() -> httpx.Response:
+        resp = httpx.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
+    response = execute_with_resilience(
+        "defectdojo_read",
+        get_timeout_config("defectdojo_read"),
+        _get,
+        retryable=_RETRYABLE_HTTPX,
+    )
+    return response.json()
 
 # 更新finding工具
 

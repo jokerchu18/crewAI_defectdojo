@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# risk_acceptance_review_agent's ouput
+# risk_acceptance_agent's output
 
 class RiskAcceptanceCandidate(BaseModel):
     finding_id: int = Field(..., description="DefectDojo finding id")
@@ -19,10 +19,10 @@ class RiskAcceptanceCandidate(BaseModel):
     restart_sla_expired: bool = Field(..., description="Whether to restart SLA when expired")
 
 
-class RiskAcceptanceReviewResult(BaseModel):
+class RiskAcceptanceResult(BaseModel):
     candidates: list[RiskAcceptanceCandidate] = Field(
         default_factory=list,
-        description="Risk acceptance review candidates"
+        description="Risk acceptance candidates"
     )
 
 

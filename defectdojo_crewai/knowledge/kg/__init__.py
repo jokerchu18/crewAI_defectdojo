@@ -25,10 +25,16 @@ from defectdojo_crewai.knowledge.kg.query import (
     search_kev_cves,
     subgraph_by_owasp,
 )
+from defectdojo_crewai.knowledge.kg.tools import (
+    KnowledgeGraphLookupTool,
+    knowledge_graph_lookup,
+)
 
 __all__ = [
     "get_graph",
     "inject_kg_context",
+    "KnowledgeGraphLookupTool",
+    "knowledge_graph_lookup",
     "enrich_graph_from_scan",
     "enrich_graph_with_cves",
     "enrich_graph_with_cves_batch",

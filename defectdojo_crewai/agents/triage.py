@@ -10,6 +10,7 @@ from defectdojo_crewai.knowledge.tools import (
     KnowledgeSearchCVEDescriptionTool,
     KnowledgeSearchSimilarFindingTool,
 )
+from defectdojo_crewai.knowledge.kg.tools import KnowledgeGraphLookupTool
 
 
 triage_agent = Agent(
@@ -41,8 +42,17 @@ triage_agent = Agent(
         "ransomware_used、epss_score、active、verified、false_p、out_of_scope 等，"
         "则调用 update 工具写回 DefectDojo。"
         "你必须逐个处理 findings 列表中的每一项，不能跳过，不能只输出总结而不执行工具。"
+        "获取每个 finding 后，你必须先从 vulnerability_ids、cwe、title、description "
+        "等字段提取 CVE、CWE 和 OWASP 标识；如果存在任一标识，"
+        "必须先调用 knowledge_graph_lookup 查询结构化知识，"
+        "该查询必须发生在 CVSS 校验、可利用性判断和有效性判断之前。"
+        "不得根据用户消息猜测 CVE/CWE，也不得编造不存在的 ID。"
+        "如果 finding 没有 CVE/CWE，或知识图谱没有匹配结果，"
+        "必须明确记录“KG 无匹配证据”，然后继续处理。"
+        "KG 返回的信息只能作为证据，不能覆盖 DefectDojo finding 中的原始字段。"
     ),
     tools=[
+        KnowledgeGraphLookupTool(),
         KnowledgeSearchCVEDescriptionTool(),
         KnowledgeSearchSimilarFindingTool(),
         gated_write_tool(

@@ -9,6 +9,7 @@ from defectdojo_crewai.tools.defectdojo_api import (
 from defectdojo_crewai.knowledge.tools import (
     KnowledgeSearchRemediationPatternTool,
 )
+from defectdojo_crewai.knowledge.kg.tools import KnowledgeGraphLookupTool
 
 remediation_agent = Agent(
     role="漏洞修复跟踪与SLA管理专家",
@@ -29,11 +30,20 @@ remediation_agent = Agent(
         "利用概率优先参考 EPSS Score，如无 EPSS 则参考 known_exploited 或 KEV 标记；"
         "剩余时间因子可按 (SLA剩余天数 / SLA总天数) 的倒数理解，剩余时间越少，优先级越高。"
         "你必须先获取 Product 下所有活跃漏洞，再逐条计算和排序。"
+        "获取每个 finding 后，你必须先从 vulnerability_ids、cwe、title、description "
+        "等字段提取 CVE、CWE 和 OWASP 标识；如果存在任一标识，"
+        "必须在计算修复优先级、SLA 和生成修复方案之前调用 knowledge_graph_lookup，"
+        "补充 CWE 根因、CVE 影响、KEV/EPSS 和 OWASP 分类证据。"
+        "不得根据用户消息猜测 CVE/CWE，也不得编造不存在的 ID。"
+        "如果 finding 没有 CVE/CWE，或知识图谱没有匹配结果，"
+        "必须明确记录“KG 无匹配证据”，不得编造修复建议来源。"
+        "必须区分 finding 原始数据与 KG 推导证据，KG 结果不能覆盖原始字段。"
         "对每个漏洞必须要补充修复计划或跟踪信息，例如 planned_remediation_date、"
         "effort_for_fixing、under_review，并调用专用修复更新工具写回。"
         "你不能只给笼统总结，必须输出清晰的优先级列表和SLA告警结果。"
     ),
     tools=[
+        KnowledgeGraphLookupTool(),
         KnowledgeSearchRemediationPatternTool(),
         DefectDojoGetFindingByProductIDTool(),
         gated_write_tool(

@@ -140,6 +140,9 @@ AGENT_TIMEOUTS: dict[str, TimeoutConfig] = {
     "risk_acceptance": TimeoutConfig(
         agent_timeout=settings.agent_risk_acceptance_timeout,
     ),
+    "report": TimeoutConfig(
+        agent_timeout=settings.agent_default_timeout,
+    ),
 }
 
 

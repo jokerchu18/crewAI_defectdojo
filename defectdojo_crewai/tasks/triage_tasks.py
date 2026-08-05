@@ -14,6 +14,16 @@ triage_task = Task(
         "\n"
         "3. 对 results 中的每一个 finding，逐个执行同样的分诊流程："
         "\n"
+        "   3.0 知识图谱查询（必须最先执行）："
+        "从该 finding 的 vulnerability_ids、cwe、title、description 中提取 "
+        "CVE、CWE 和 OWASP 标识。"
+        "如果存在 CVE 或 CWE，必须调用 knowledge_graph_lookup 查询结构化知识，"
+        "并且该查询必须发生在 CVSS 校验、可利用性判断和有效性判断之前。"
+        "不得根据用户消息猜测 CVE/CWE，也不得编造不存在的 ID。"
+        "如果 finding 没有 CVE/CWE，或 KG 返回 no_match，"
+        "必须在该 finding 的结果中记录“KG 无匹配证据”，然后继续处理。"
+        "KG 返回的信息只能作为证据，不能覆盖 finding 中的原始字段。"
+        "\n"
         "   3.1 CVSS 评分验证："
         "检查 cvssv3_score、cvssv4_score、severity、severity_justification。"
         "如果 CVSS 分数与当前 severity 大致一致，则说明匹配；"
@@ -43,12 +53,13 @@ triage_task = Task(
         "不要只处理第一个 finding，不要只给总体总结。"
         "\n"
         "5. 最终输出时，请按列表形式给出每个 finding 的处理结果，每项至少包含："
-        "finding_id、title、cvss_check_result、exploitability_result、"
+        "finding_id、title、kg_evidence、cvss_check_result、exploitability_result、"
         "validity_decision、verify_executed、update_executed、updated_fields。"
     ),
     expected_output=(
         "一个逐条分诊结果列表。每个 finding 都有独立结果，包含 finding_id、title、"
-        "CVSS 检查结论、可利用性评估结论、是否为有效漏洞、是否执行 verify、"
+        "知识图谱证据（或“KG 无匹配证据”）、CVSS 检查结论、可利用性评估结论、"
+        "是否为有效漏洞、是否执行 verify、"
         "是否执行 update，以及更新了哪些字段。"
     ),
     agent=triage_agent,
